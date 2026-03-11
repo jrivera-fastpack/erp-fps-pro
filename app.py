@@ -250,61 +250,93 @@ def main_app():
     # ==========================================
     with tab1:
         st.header("Gestión Comercial (Presupuesto)")
-        with st.form("form_comercial"):
-            c1, c2, c3 = st.columns(3)
-            id_nv = c1.text_input("ID Nota de Venta")
-            cliente = c1.text_input("Cliente")
-            tipo = c2.selectbox("Tipo de Servicio", ["SSEE", "SE TERRENO"])
-            lugar = c2.text_input("Lugar / Faena")
-            col_mon, col_mnt = c3.columns([1, 2])
-            moneda = col_mon.selectbox("Moneda", ["CLP", "USD"])
-            monto = col_mnt.number_input("Monto Ofertado", min_value=0.0, step=0.001, format="%.3f")
-            
-            st.divider()
-            st.markdown("### Proyección en Matriz Semanal (Opcional)")
-            st.info("Ingresa los días de duración del servicio. Si ya conoces la fecha de inicio y cuadrilla, puedes establecerla ahora para enviarla a la Matriz Semanal.")
-            
-            c4, c5, c6 = st.columns(3)
-            dias_v = c4.number_input("Días Vendidos (Duración)", min_value=0.0, step=1.0)
-            f_ini = c5.date_input("Fecha de Inicio (Dejar vacío si no aplica)", format="DD/MM/YYYY", value=None)
-            especialistas_sel = c6.multiselect("Especialistas Reservados", ESPECIALISTAS)
-            incluye_finde = st.radio("¿Considerar fines de semana en esta proyección?", ["No (Saltar Sáb/Dom)", "Sí (Días continuos)"], horizontal=True)
+        
+        col_form, col_admin = st.columns([2, 1])
+        
+        with col_form:
+            with st.form("form_comercial"):
+                st.subheader("Crear Nueva Nota de Venta")
+                c1, c2, c3 = st.columns(3)
+                id_nv = c1.text_input("ID Nota de Venta")
+                cliente = c1.text_input("Cliente")
+                tipo = c2.selectbox("Tipo de Servicio", ["SSEE", "SE TERRENO"])
+                lugar = c2.text_input("Lugar / Faena")
+                col_mon, col_mnt = c3.columns([1, 2])
+                moneda = col_mon.selectbox("Moneda", ["CLP", "USD"])
+                monto = col_mnt.number_input("Monto Ofertado", min_value=0.0, step=0.001, format="%.3f")
+                
+                st.divider()
+                st.markdown("### Proyección en Matriz Semanal (Opcional)")
+                st.info("Ingresa los días de duración del servicio. Si ya conoces la fecha de inicio y cuadrilla, puedes establecerla ahora para enviarla a la Matriz Semanal.")
+                
+                c4, c5, c6 = st.columns(3)
+                dias_v = c4.number_input("Días Vendidos (Duración)", min_value=0.0, step=1.0)
+                f_ini = c5.date_input("Fecha de Inicio (Dejar vacío si no aplica)", format="DD/MM/YYYY", value=None)
+                especialistas_sel = c6.multiselect("Especialistas Reservados", ESPECIALISTAS)
+                incluye_finde = st.radio("¿Considerar fines de semana en esta proyección?", ["No (Saltar Sáb/Dom)", "Sí (Días continuos)"], horizontal=True)
 
-            if st.form_submit_button("Guardar Nota de Venta", use_container_width=True):
-                if id_nv and cliente:
-                    try:
-                        # BLINDAJE 1: Verificamos si el ID ya existe antes de insertar
-                        verificacion = supabase.table("notas_venta").select("id_nv").eq("id_nv", id_nv).execute()
-                        if len(verificacion.data) > 0:
-                            st.warning(f"⚠️ La Nota de Venta '{id_nv}' ya se encuentra registrada en el sistema.")
-                        else:
-                            supabase.table("notas_venta").insert({
-                                "id_nv": id_nv, "cliente": cliente, "tipo_servicio": tipo, 
-                                "lugar": lugar, "moneda": moneda, "monto_vendido": monto, 
-                                "hh_vendidas": dias_v, "estado": "Abierta"
-                            }).execute()
-                            
-                            if especialistas_sel and dias_v > 0 and f_ini is not None:
-                                es_continuo = incluye_finde == "Sí (Días continuos)"
-                                f_f = calcular_fecha_fin_dinamica(f_ini, dias_v, es_continuo)
-                                for esp in especialistas_sel:
-                                    supabase.table("asignaciones_personal").insert({
-                                        "id_nv": id_nv, 
-                                        "especialista": esp, 
-                                        "fecha_inicio": str(f_ini), 
-                                        "fecha_fin": str(f_f), 
-                                        "hh_asignadas": 0, 
-                                        "actividad_ssee": "PROYECCION_GLOBAL", 
-                                        "comentarios": "EXTRAS" if es_continuo else "LIBRES", 
-                                        "progreso": 0
-                                    }).execute()
-                                    
-                            st.success(f"✅ NV {id_nv} registrada exitosamente.")
+                if st.form_submit_button("Guardar Nota de Venta", use_container_width=True):
+                    if id_nv and cliente:
+                        try:
+                            # BLINDAJE 1: Verificamos si el ID ya existe antes de insertar
+                            verificacion = supabase.table("notas_venta").select("id_nv").eq("id_nv", id_nv).execute()
+                            if len(verificacion.data) > 0:
+                                st.warning(f"⚠️ La Nota de Venta '{id_nv}' ya se encuentra registrada en el sistema.")
+                            else:
+                                supabase.table("notas_venta").insert({
+                                    "id_nv": id_nv, "cliente": cliente, "tipo_servicio": tipo, 
+                                    "lugar": lugar, "moneda": moneda, "monto_vendido": monto, 
+                                    "hh_vendidas": dias_v, "estado": "Abierta"
+                                }).execute()
+                                
+                                if especialistas_sel and dias_v > 0 and f_ini is not None:
+                                    es_continuo = incluye_finde == "Sí (Días continuos)"
+                                    f_f = calcular_fecha_fin_dinamica(f_ini, dias_v, es_continuo)
+                                    for esp in especialistas_sel:
+                                        supabase.table("asignaciones_personal").insert({
+                                            "id_nv": id_nv, 
+                                            "especialista": esp, 
+                                            "fecha_inicio": str(f_ini), 
+                                            "fecha_fin": str(f_f), 
+                                            "hh_asignadas": 0, 
+                                            "actividad_ssee": "PROYECCION_GLOBAL", 
+                                            "comentarios": "EXTRAS" if es_continuo else "LIBRES", 
+                                            "progreso": 0
+                                        }).execute()
+                                        
+                                st.success(f"✅ NV {id_nv} registrada exitosamente.")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Ocurrió un error al guardar en la base de datos: {e}")
+                    else:
+                        st.warning("⚠️ Debe ingresar un ID y Cliente válidos.")
+        
+        with col_admin:
+            st.subheader("Administración")
+            st.info("Utilice esta opción para eliminar un proyecto completo del sistema. Esto borrará irreversiblemente la Nota de Venta, todas sus asignaciones, horas y gastos asociados.")
+            
+            nvs_para_borrar = obtener_nvs()
+            if nvs_para_borrar:
+                opciones_borrar = {f"{n['id_nv']} - {n['cliente']}": n['id_nv'] for n in nvs_para_borrar}
+                nv_a_borrar_label = st.selectbox("Seleccione Proyecto a Eliminar", list(opciones_borrar.keys()))
+                
+                # Checkbox de confirmación para evitar borrados accidentales
+                confirmacion_borrado = st.checkbox(f"Estoy seguro que deseo eliminar {nv_a_borrar_label}")
+                
+                if st.button("🗑️ Eliminar Proyecto Definitivamente", type="secondary"):
+                    if confirmacion_borrado:
+                        try:
+                            id_a_borrar = opciones_borrar[nv_a_borrar_label]
+                            # Borramos de la tabla principal (gracias a ON DELETE CASCADE, se borrarán también las asignaciones y gastos)
+                            supabase.table("notas_venta").delete().eq("id_nv", id_a_borrar).execute()
+                            st.success(f"✅ Proyecto {id_a_borrar} eliminado del sistema.")
                             st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Ocurrió un error al guardar en la base de datos: {e}")
-                else:
-                    st.warning("⚠️ Debe ingresar un ID y Cliente válidos.")
+                        except Exception as e:
+                            st.error(f"Error al intentar eliminar el proyecto: {e}")
+                    else:
+                        st.warning("Debe confirmar marcando la casilla antes de eliminar.")
+            else:
+                st.write("No hay proyectos registrados para eliminar.")
 
     # ==========================================
     # MÓDULO 2: MATRIZ DE PROYECCIÓN
@@ -356,37 +388,62 @@ def main_app():
 
             with col_exp2:
                 with st.expander("🌴 Registrar Ausencia (Vacaciones, Permisos, Faltas)", expanded=False):
-                    with st.form("form_ausencia"):
-                        esp_ausencia = st.multiselect("Especialista(s)", ESPECIALISTAS, key="aus_esp")
-                        tipo_ausencia = st.selectbox("Tipo de Ausencia", ["Vacaciones", "Permiso Administrativo", "Licencia Médica", "Falta Injustificada"])
-                        
-                        c_a1, c_a2 = st.columns(2)
-                        f_ini_aus = c_a1.date_input("Fecha Inicio", format="DD/MM/YYYY", key="aus_ini")
-                        f_fin_aus = c_a2.date_input("Fecha Fin", format="DD/MM/YYYY", key="aus_fin")
-                        
-                        comentario_aus = st.text_input("Detalle / Motivo (Opcional)")
-                        
-                        if st.form_submit_button("Registrar Ausencia en RRHH", use_container_width=True):
-                            if esp_ausencia and f_ini_aus <= f_fin_aus:
+                    tab_rrhh1, tab_rrhh2 = st.tabs(["Ingresar Ausencia", "Cancelar Ausencia"])
+                    
+                    with tab_rrhh1:
+                        with st.form("form_ausencia"):
+                            esp_ausencia = st.multiselect("Especialista(s)", ESPECIALISTAS, key="aus_esp")
+                            tipo_ausencia = st.selectbox("Tipo de Ausencia", ["Vacaciones", "Permiso Administrativo", "Licencia Médica", "Falta Injustificada"])
+                            
+                            c_a1, c_a2 = st.columns(2)
+                            f_ini_aus = c_a1.date_input("Fecha Inicio", format="DD/MM/YYYY", key="aus_ini")
+                            f_fin_aus = c_a2.date_input("Fecha Fin", format="DD/MM/YYYY", key="aus_fin")
+                            
+                            comentario_aus = st.text_input("Detalle / Motivo (Opcional)")
+                            
+                            if st.form_submit_button("Registrar Ausencia en RRHH", use_container_width=True):
+                                if esp_ausencia and f_ini_aus <= f_fin_aus:
+                                    try:
+                                        hh_final = calcular_hh_ssee(f_ini_aus, f_fin_aus, incluye_finde=False)
+                                        for esp in esp_ausencia:
+                                            supabase.table("asignaciones_personal").insert({
+                                                "id_nv": "AUSENCIA", 
+                                                "especialista": esp, 
+                                                "fecha_inicio": str(f_ini_aus), 
+                                                "fecha_fin": str(f_fin_aus), 
+                                                "hh_asignadas": hh_final, 
+                                                "actividad_ssee": f"{tipo_ausencia}" + (f" - {comentario_aus}" if comentario_aus else ""), 
+                                                "comentarios": "LIBRES", 
+                                                "progreso": 100 
+                                            }).execute()
+                                        st.success("✅ Ausencia registrada. Se descontará de la capacidad neta del mes.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Error al registrar ausencia: {e}")
+                                else:
+                                    st.error("⚠️ Verifique los especialistas y que la fecha de inicio no sea mayor a la final.")
+                    
+                    with tab_rrhh2:
+                        ausencias_raw = supabase.table("asignaciones_personal").select("*").eq("id_nv", "AUSENCIA").execute().data
+                        if ausencias_raw:
+                            df_aus_borrar = pd.DataFrame(ausencias_raw)
+                            # Formatear opciones para el selector
+                            opciones_aus_borrar = {}
+                            for _, row in df_aus_borrar.iterrows():
+                                etiqueta = f"{row['especialista']} | {row['actividad_ssee']} | {row['fecha_inicio']} a {row['fecha_fin']}"
+                                opciones_aus_borrar[etiqueta] = row['id']
+                                
+                            ausencia_seleccionada = st.selectbox("Seleccione el registro a eliminar", list(opciones_aus_borrar.keys()))
+                            if st.button("🗑️ Eliminar Ausencia Seleccionada"):
                                 try:
-                                    hh_final = calcular_hh_ssee(f_ini_aus, f_fin_aus, incluye_finde=False)
-                                    for esp in esp_ausencia:
-                                        supabase.table("asignaciones_personal").insert({
-                                            "id_nv": "AUSENCIA", 
-                                            "especialista": esp, 
-                                            "fecha_inicio": str(f_ini_aus), 
-                                            "fecha_fin": str(f_fin_aus), 
-                                            "hh_asignadas": hh_final, 
-                                            "actividad_ssee": f"{tipo_ausencia}" + (f" - {comentario_aus}" if comentario_aus else ""), 
-                                            "comentarios": "LIBRES", 
-                                            "progreso": 100 
-                                        }).execute()
-                                    st.success("✅ Ausencia registrada. Se descontará de la capacidad neta del mes.")
+                                    id_ausencia = opciones_aus_borrar[ausencia_seleccionada]
+                                    supabase.table("asignaciones_personal").delete().eq("id", id_ausencia).execute()
+                                    st.success("✅ Ausencia eliminada. Se ha restaurado la capacidad operativa.")
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"❌ Error al registrar ausencia: {e}")
-                            else:
-                                st.error("⚠️ Verifique los especialistas y que la fecha de inicio no sea mayor a la final.")
+                                    st.error(f"Error al eliminar la ausencia: {e}")
+                        else:
+                            st.write("No hay ausencias registradas actualmente.")
                         
         st.divider()
         
