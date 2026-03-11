@@ -11,7 +11,7 @@ import os
 import base64
 
 # --- 1. CONFIGURACIÓN Y ESTILO CORPORATIVO ---
-st.set_page_config(page_title="ERP FPS PRO", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Coordinación FPS", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
@@ -62,6 +62,7 @@ st.markdown("""
         background-color: white;
         border-radius: 10px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        border-top: 5px solid #E6007E;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -162,7 +163,7 @@ def login_screen():
     c1, c2, c3 = st.columns([1, 1.2, 1])
     with c2:
         st.markdown("<div class='login-container'>", unsafe_allow_html=True)
-        st.markdown("<h2 style='text-align: center; color: #003366;'>🔐 Acceso ERP FPS PRO</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center; color: #E6007E;'>🔐 Acceso Coordinación FPS</h2>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; color: gray;'>Por favor ingrese sus credenciales autorizadas.</p>", unsafe_allow_html=True)
         
         with st.form("login_form"):
@@ -188,7 +189,16 @@ def login_screen():
 # --- APLICACIÓN PRINCIPAL (SOLO ACCESIBLE SI ESTÁ AUTENTICADO) ---
 def main_app():
     # --- BARRA LATERAL ---
-    st.sidebar.image("https://via.placeholder.com/150x50.png?text=FPS+PRO", use_container_width=True)
+    # Logotipo generado con HTML/CSS usando los colores corporativos de FASTPACK
+    st.sidebar.markdown("""
+        <div style='text-align: center; padding: 15px 0; background-color: white; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 6px solid #E6007E;'>
+            <h2 style='margin: 0; font-size: 1.4em; font-family: "Arial Black", sans-serif; font-weight: 900; letter-spacing: 1px; line-height: 1.1;'>
+                <span style='color: #E6007E;'>COORDINACIÓN</span><br>
+                <span style='color: #00AEEF;'>FPS</span>
+            </h2>
+        </div>
+    """, unsafe_allow_html=True)
+    
     st.sidebar.markdown(f"<p style='text-align:center; font-size:0.9em;'>👤 <b>Usuario:</b> {st.session_state.user_email}</p>", unsafe_allow_html=True)
     st.sidebar.button("🚪 Cerrar Sesión", on_click=logout, use_container_width=True)
     st.sidebar.divider()
@@ -1114,7 +1124,8 @@ def main_app():
                 pdf.add_page()
                 pdf.set_font("Arial", 'B', 20)
                 pdf.set_text_color(0, 51, 102)
-                pdf.cell(0, 15, "REPORTE EJECUTIVO DE CIERRE - FPS PRO", ln=True, align='C')
+                # Título del reporte editado
+                pdf.cell(0, 15, "REPORTE EJECUTIVO DE CIERRE - COORDINACIÓN FPS", ln=True, align='C')
                 pdf.ln(5)
                 
                 fmt_v_pdf = f"{info_nv['monto_vendido']:,.0f}" if moneda == 'CLP' else f"{info_nv['monto_vendido']:,.3f}"
