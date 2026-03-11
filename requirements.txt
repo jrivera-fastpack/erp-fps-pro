@@ -1,0 +1,6 @@
+streamlit>=1.32.0
+supabase>=2.3.0
+pandas>=2.1.0
+plotly>=5.18.0
+fpdf>=1.7.2
+kaleido>=0.2.1
