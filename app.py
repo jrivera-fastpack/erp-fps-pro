@@ -116,27 +116,58 @@ FERIADOS_CHILE_2026 = [
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 MESES_ES = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
 
-# --- FUNCIONES AUXILIARES ---
+# --- FUNCIONES AUXILIARES CORREGIDAS (CÁLCULOS EXACTOS) ---
 def calcular_fecha_fin_dinamica(f_ini, dias_totales, incluye_finde):
+    if dias_totales <= 0:
+        return f_ini
+        
     dias_contados = 0
     fecha_actual = f_ini
+    
     while dias_contados < dias_totales:
+        es_feriado = fecha_actual.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
+        es_finde = fecha_actual.weekday() >= 5
+        
         if not incluye_finde:
-            if fecha_actual.weekday() < 5:
+            # Si el equipo descansa findes/feriados, solo contamos si es un día hábil real
+            if not es_finde and not es_feriado:
                 dias_contados += 1
         else:
+            # Si el equipo trabaja continuo (EXTRAS), cada día calendario cuenta como avance
             dias_contados += 1
+            
         if dias_contados < dias_totales:
             fecha_actual += timedelta(days=1)
+            
     return fecha_actual
 
-def calcular_hh_ssee(f_ini, f_fin):
+def calcular_hh_ssee(f_ini, f_fin, incluye_finde=False):
     hh = 0
+    if f_fin < f_ini: 
+        return 0
+        
     dias_tot = (f_fin - f_ini).days + 1
+    
     for i in range(dias_tot):
-        dia_semana = (f_ini + timedelta(days=i)).weekday()
-        if dia_semana < 4: hh += 9.5
-        elif dia_semana == 4: hh += 8.5
+        fecha_actual = f_ini + timedelta(days=i)
+        dia_semana = fecha_actual.weekday()
+        str_fecha = fecha_actual.strftime("%d-%m-%Y")
+        
+        es_feriado = str_fecha in FERIADOS_CHILE_2026
+        es_finde = dia_semana >= 5
+        
+        # Si no están programados para trabajar findes/feriados, ese día suma 0 horas
+        if not incluye_finde and (es_finde or es_feriado):
+            continue 
+            
+        # Días contabilizables: Lunes a Jueves (9.5), Viernes (8.5), Extras en Sáb/Dom/Feriado (9.5)
+        if dia_semana < 4: 
+            hh += 9.5
+        elif dia_semana == 4: 
+            hh += 8.5
+        else: 
+            hh += 9.5 
+            
     return hh
 
 def obtener_nvs(estado_filter=None):
@@ -241,29 +272,39 @@ def main_app():
 
             if st.form_submit_button("Guardar Nota de Venta", use_container_width=True):
                 if id_nv and cliente:
-                    supabase.table("notas_venta").insert({
-                        "id_nv": id_nv, "cliente": cliente, "tipo_servicio": tipo, 
-                        "lugar": lugar, "moneda": moneda, "monto_vendido": monto, 
-                        "hh_vendidas": dias_v, "estado": "Abierta"
-                    }).execute()
-                    
-                    if especialistas_sel and dias_v > 0 and f_ini is not None:
-                        es_continuo = incluye_finde == "Sí (Días continuos)"
-                        f_f = calcular_fecha_fin_dinamica(f_ini, dias_v, es_continuo)
-                        for esp in especialistas_sel:
-                            supabase.table("asignaciones_personal").insert({
-                                "id_nv": id_nv, 
-                                "especialista": esp, 
-                                "fecha_inicio": str(f_ini), 
-                                "fecha_fin": str(f_f), 
-                                "hh_asignadas": 0, 
-                                "actividad_ssee": "PROYECCION_GLOBAL", 
-                                "comentarios": "EXTRAS" if es_continuo else "LIBRES", 
-                                "progreso": 0
+                    try:
+                        # BLINDAJE 1: Verificamos si el ID ya existe antes de insertar
+                        verificacion = supabase.table("notas_venta").select("id_nv").eq("id_nv", id_nv).execute()
+                        if len(verificacion.data) > 0:
+                            st.warning(f"⚠️ La Nota de Venta '{id_nv}' ya se encuentra registrada en el sistema.")
+                        else:
+                            supabase.table("notas_venta").insert({
+                                "id_nv": id_nv, "cliente": cliente, "tipo_servicio": tipo, 
+                                "lugar": lugar, "moneda": moneda, "monto_vendido": monto, 
+                                "hh_vendidas": dias_v, "estado": "Abierta"
                             }).execute()
                             
-                    st.success(f"✅ NV {id_nv} registrada exitosamente.")
-                    st.rerun()
+                            if especialistas_sel and dias_v > 0 and f_ini is not None:
+                                es_continuo = incluye_finde == "Sí (Días continuos)"
+                                f_f = calcular_fecha_fin_dinamica(f_ini, dias_v, es_continuo)
+                                for esp in especialistas_sel:
+                                    supabase.table("asignaciones_personal").insert({
+                                        "id_nv": id_nv, 
+                                        "especialista": esp, 
+                                        "fecha_inicio": str(f_ini), 
+                                        "fecha_fin": str(f_f), 
+                                        "hh_asignadas": 0, 
+                                        "actividad_ssee": "PROYECCION_GLOBAL", 
+                                        "comentarios": "EXTRAS" if es_continuo else "LIBRES", 
+                                        "progreso": 0
+                                    }).execute()
+                                    
+                            st.success(f"✅ NV {id_nv} registrada exitosamente.")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Ocurrió un error al guardar en la base de datos: {e}")
+                else:
+                    st.warning("⚠️ Debe ingresar un ID y Cliente válidos.")
 
     # ==========================================
     # MÓDULO 2: MATRIZ DE PROYECCIÓN
@@ -293,22 +334,25 @@ def main_app():
                         incluye_finde = st.radio("¿Considerar fin de semana?", ["No (Saltar Sáb/Dom)", "Sí (Días continuos)"], index=0, key="proy_finde")
                         
                         if st.form_submit_button("Guardar Proyección", use_container_width=True):
-                            supabase.table("asignaciones_personal").delete().eq("id_nv", nv_data_sel['id_nv']).eq("actividad_ssee", "PROYECCION_GLOBAL").execute()
-                            es_continuo = incluye_finde == "Sí (Días continuos)"
-                            f_f = calcular_fecha_fin_dinamica(f_ini, dias_proy, es_continuo)
-                            for esp in especialistas_sel:
-                                supabase.table("asignaciones_personal").insert({
-                                    "id_nv": nv_data_sel['id_nv'], 
-                                    "especialista": esp, 
-                                    "fecha_inicio": str(f_ini), 
-                                    "fecha_fin": str(f_f), 
-                                    "hh_asignadas": 0, 
-                                    "actividad_ssee": "PROYECCION_GLOBAL", 
-                                    "comentarios": "EXTRAS" if es_continuo else "LIBRES", 
-                                    "progreso": 0
-                                }).execute()
-                            st.success("✅ Proyección actualizada en la Matriz correctamente.")
-                            st.rerun()
+                            try:
+                                supabase.table("asignaciones_personal").delete().eq("id_nv", nv_data_sel['id_nv']).eq("actividad_ssee", "PROYECCION_GLOBAL").execute()
+                                es_continuo = incluye_finde == "Sí (Días continuos)"
+                                f_f = calcular_fecha_fin_dinamica(f_ini, dias_proy, es_continuo)
+                                for esp in especialistas_sel:
+                                    supabase.table("asignaciones_personal").insert({
+                                        "id_nv": nv_data_sel['id_nv'], 
+                                        "especialista": esp, 
+                                        "fecha_inicio": str(f_ini), 
+                                        "fecha_fin": str(f_f), 
+                                        "hh_asignadas": 0, 
+                                        "actividad_ssee": "PROYECCION_GLOBAL", 
+                                        "comentarios": "EXTRAS" if es_continuo else "LIBRES", 
+                                        "progreso": 0
+                                    }).execute()
+                                st.success("✅ Proyección actualizada en la Matriz correctamente.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al guardar proyección: {e}")
 
             with col_exp2:
                 with st.expander("🌴 Registrar Ausencia (Vacaciones, Permisos, Faltas)", expanded=False):
@@ -324,22 +368,25 @@ def main_app():
                         
                         if st.form_submit_button("Registrar Ausencia en RRHH", use_container_width=True):
                             if esp_ausencia and f_ini_aus <= f_fin_aus:
-                                hh_final = calcular_hh_ssee(f_ini_aus, f_fin_aus)
-                                for esp in esp_ausencia:
-                                    supabase.table("asignaciones_personal").insert({
-                                        "id_nv": "AUSENCIA", 
-                                        "especialista": esp, 
-                                        "fecha_inicio": str(f_ini_aus), 
-                                        "fecha_fin": str(f_fin_aus), 
-                                        "hh_asignadas": hh_final, 
-                                        "actividad_ssee": f"{tipo_ausencia}" + (f" - {comentario_aus}" if comentario_aus else ""), 
-                                        "comentarios": "LIBRES", 
-                                        "progreso": 100 
-                                    }).execute()
-                                st.success("✅ Ausencia registrada. Se descontará de la capacidad neta del mes.")
-                                st.rerun()
+                                try:
+                                    hh_final = calcular_hh_ssee(f_ini_aus, f_fin_aus, incluye_finde=False)
+                                    for esp in esp_ausencia:
+                                        supabase.table("asignaciones_personal").insert({
+                                            "id_nv": "AUSENCIA", 
+                                            "especialista": esp, 
+                                            "fecha_inicio": str(f_ini_aus), 
+                                            "fecha_fin": str(f_fin_aus), 
+                                            "hh_asignadas": hh_final, 
+                                            "actividad_ssee": f"{tipo_ausencia}" + (f" - {comentario_aus}" if comentario_aus else ""), 
+                                            "comentarios": "LIBRES", 
+                                            "progreso": 100 
+                                        }).execute()
+                                    st.success("✅ Ausencia registrada. Se descontará de la capacidad neta del mes.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Error al registrar ausencia: {e}")
                             else:
-                                st.error("Verifique los especialistas y que la fecha de inicio no sea mayor a la final.")
+                                st.error("⚠️ Verifique los especialistas y que la fecha de inicio no sea mayor a la final.")
                         
         st.divider()
         
@@ -437,29 +484,32 @@ def main_app():
                     
                     if st.form_submit_button("Añadir al Alcance"):
                         if actividades_sel:
-                            existing = supabase.table("asignaciones_personal").select("actividad_ssee").eq("id_nv", nv_id_sel).execute().data
-                            existing_acts = [e['actividad_ssee'] for e in existing if e['actividad_ssee'] != 'PROYECCION_GLOBAL']
-                            
-                            agregadas = 0
-                            for act in actividades_sel:
-                                if act not in existing_acts:
-                                    supabase.table("asignaciones_personal").insert({
-                                        "id_nv": nv_id_sel, 
-                                        "especialista": "Sin Asignar", 
-                                        "fecha_inicio": str(datetime.today().date()), 
-                                        "fecha_fin": str(datetime.today().date()), 
-                                        "hh_asignadas": 0, 
-                                        "actividad_ssee": act, 
-                                        "comentarios": "SIN_PROGRAMAR", 
-                                        "progreso": 0
-                                    }).execute()
-                                    agregadas += 1
-                            
-                            if agregadas > 0:
-                                st.success(f"✅ {agregadas} actividades añadidas a la bolsa de ajuste.")
-                                st.rerun()
-                            else:
-                                st.warning("Las actividades seleccionadas ya existen en el alcance.")
+                            try:
+                                existing = supabase.table("asignaciones_personal").select("actividad_ssee").eq("id_nv", nv_id_sel).execute().data
+                                existing_acts = [e['actividad_ssee'] for e in existing if e['actividad_ssee'] != 'PROYECCION_GLOBAL']
+                                
+                                agregadas = 0
+                                for act in actividades_sel:
+                                    if act not in existing_acts:
+                                        supabase.table("asignaciones_personal").insert({
+                                            "id_nv": nv_id_sel, 
+                                            "especialista": "Sin Asignar", 
+                                            "fecha_inicio": str(datetime.today().date()), 
+                                            "fecha_fin": str(datetime.today().date()), 
+                                            "hh_asignadas": 0, 
+                                            "actividad_ssee": act, 
+                                            "comentarios": "SIN_PROGRAMAR", 
+                                            "progreso": 0
+                                        }).execute()
+                                        agregadas += 1
+                                
+                                if agregadas > 0:
+                                    st.success(f"✅ {agregadas} actividades añadidas a la bolsa de ajuste.")
+                                    st.rerun()
+                                else:
+                                    st.warning("⚠️ Las actividades seleccionadas ya existen en el alcance.")
+                            except Exception as e:
+                                st.error(f"❌ Error al añadir labores: {e}")
 
             with c_prog:
                 st.subheader("2. Programación Viva y Avances")
@@ -516,38 +566,41 @@ def main_app():
                                     nuevos_esps = col_e.multiselect("Asignar Especialistas", ESPECIALISTAS, default=esps_reales)
                                     
                                     if st.form_submit_button("Guardar Programación / Avance", use_container_width=True):
-                                        supabase.table("asignaciones_personal").delete().eq("id_nv", nv_id_sel).eq("actividad_ssee", act).execute()
-                                        
-                                        incluye_finde = True if extras == "Extras (Sáb/Dom)" else False
-                                        f_f = calcular_fecha_fin_dinamica(f_ini, dias_trabajo, incluye_finde)
-                                        hh_final = calcular_hh_ssee(f_ini, f_f)
-                                        
-                                        if not nuevos_esps:
-                                            supabase.table("asignaciones_personal").insert({
-                                                "id_nv": nv_id_sel, 
-                                                "especialista": "Sin Asignar", 
-                                                "fecha_inicio": str(f_ini), 
-                                                "fecha_fin": str(f_f), 
-                                                "hh_asignadas": 0, 
-                                                "actividad_ssee": act, 
-                                                "comentarios": "EXTRAS" if incluye_finde else "LIBRES", 
-                                                "progreso": nuevo_p
-                                            }).execute()
-                                        else:
-                                            for esp in nuevos_esps:
+                                        try:
+                                            supabase.table("asignaciones_personal").delete().eq("id_nv", nv_id_sel).eq("actividad_ssee", act).execute()
+                                            
+                                            incluye_finde = True if extras == "Extras (Sáb/Dom)" else False
+                                            f_f = calcular_fecha_fin_dinamica(f_ini, dias_trabajo, incluye_finde)
+                                            hh_final = calcular_hh_ssee(f_ini, f_f, incluye_finde)
+                                            
+                                            if not nuevos_esps:
                                                 supabase.table("asignaciones_personal").insert({
                                                     "id_nv": nv_id_sel, 
-                                                    "especialista": esp, 
+                                                    "especialista": "Sin Asignar", 
                                                     "fecha_inicio": str(f_ini), 
                                                     "fecha_fin": str(f_f), 
-                                                    "hh_asignadas": hh_final, 
+                                                    "hh_asignadas": 0, 
                                                     "actividad_ssee": act, 
                                                     "comentarios": "EXTRAS" if incluye_finde else "LIBRES", 
                                                     "progreso": nuevo_p
                                                 }).execute()
-                                                
-                                        st.success("✅ Actividad actualizada en el cronograma.")
-                                        st.rerun()
+                                            else:
+                                                for esp in nuevos_esps:
+                                                    supabase.table("asignaciones_personal").insert({
+                                                        "id_nv": nv_id_sel, 
+                                                        "especialista": esp, 
+                                                        "fecha_inicio": str(f_ini), 
+                                                        "fecha_fin": str(f_f), 
+                                                        "hh_asignadas": hh_final, 
+                                                        "actividad_ssee": act, 
+                                                        "comentarios": "EXTRAS" if incluye_finde else "LIBRES", 
+                                                        "progreso": nuevo_p
+                                                    }).execute()
+                                                    
+                                            st.success("✅ Actividad actualizada en el cronograma.")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"❌ Error al actualizar la tarea en la base de datos: {e}")
                     else:
                         st.info("Utilice el panel de la izquierda para definir las actividades del alcance de este proyecto.")
 
@@ -743,14 +796,17 @@ def main_app():
                         f_gasto = c_g4.date_input("Fecha Gasto", format="DD/MM/YYYY")
                         
                         if st.form_submit_button("Guardar Gasto"):
-                            supabase.table("control_gastos").insert({
-                                "id_nv": nv_g_label.split(" - ")[0], 
-                                "tipo_gasto": t_g, 
-                                "monto_gasto": m_g, 
-                                "fecha_gasto": str(f_gasto)
-                            }).execute()
-                            st.success("✅ Gasto registrado en la base de datos.")
-                            st.rerun()
+                            try:
+                                supabase.table("control_gastos").insert({
+                                    "id_nv": nv_g_label.split(" - ")[0], 
+                                    "tipo_gasto": t_g, 
+                                    "monto_gasto": m_g, 
+                                    "fecha_gasto": str(f_gasto)
+                                }).execute()
+                                st.success("✅ Gasto registrado en la base de datos.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al guardar el gasto: {e}")
 
             # PREPARACIÓN DE DATOS MAESTROS PARA BI
             df_nv = pd.DataFrame(nvs_all)
@@ -1087,81 +1143,83 @@ def main_app():
             nv_c_id = nv_c_label.split(" - ")[0]
 
             if st.button("🔴 CERRAR Y GENERAR REPORTE PDF"):
-                info_nv = next(n for n in nvs_activas if n['id_nv'] == nv_c_id)
-                asig_list_raw = supabase.table("asignaciones_personal").select("*").eq("id_nv", nv_c_id).execute().data
-                
-                asig_list = [a for a in asig_list_raw if a.get('actividad_ssee') != 'PROYECCION_GLOBAL'] if asig_list_raw else []
-                
-                gastos_list = supabase.table("control_gastos").select("*").eq("id_nv", nv_c_id).execute().data
-                
-                sum_hh = sum(a['hh_asignadas'] for a in asig_list) if asig_list else 0
-                dias_ejecutados = sum_hh / 9.0
-                sum_gas_bruto = sum(g['monto_gasto'] for g in gastos_list) if gastos_list else 0
-                
-                if asig_list:
-                    df_avances = pd.DataFrame(asig_list)
-                    suma_progreso = df_avances.groupby('actividad_ssee')['progreso'].max().sum()
-                    if info_nv['tipo_servicio'] == 'SSEE':
-                        avg_prog = suma_progreso / len(ABREVIATURAS)
-                    else:
-                        avg_prog = df_avances.groupby('actividad_ssee')['progreso'].max().mean()
-                else:
-                    avg_prog = 0
+                try:
+                    info_nv = next(n for n in nvs_activas if n['id_nv'] == nv_c_id)
+                    asig_list_raw = supabase.table("asignaciones_personal").select("*").eq("id_nv", nv_c_id).execute().data
                     
-                moneda = info_nv.get('moneda', 'CLP')
-                dias_ofertados = info_nv.get('hh_vendidas', 0)
-                
-                sum_gas_real = sum_gas_bruto / tasa_cambio if moneda == 'USD' else sum_gas_bruto
+                    asig_list = [a for a in asig_list_raw if a.get('actividad_ssee') != 'PROYECCION_GLOBAL'] if asig_list_raw else []
+                    
+                    gastos_list = supabase.table("control_gastos").select("*").eq("id_nv", nv_c_id).execute().data
+                    
+                    sum_hh = sum(a['hh_asignadas'] for a in asig_list) if asig_list else 0
+                    dias_ejecutados = sum_hh / 9.0
+                    sum_gas_bruto = sum(g['monto_gasto'] for g in gastos_list) if gastos_list else 0
+                    
+                    if asig_list:
+                        df_avances = pd.DataFrame(asig_list)
+                        suma_progreso = df_avances.groupby('actividad_ssee')['progreso'].max().sum()
+                        if info_nv['tipo_servicio'] == 'SSEE':
+                            avg_prog = suma_progreso / len(ABREVIATURAS)
+                        else:
+                            avg_prog = df_avances.groupby('actividad_ssee')['progreso'].max().mean()
+                    else:
+                        avg_prog = 0
+                        
+                    moneda = info_nv.get('moneda', 'CLP')
+                    dias_ofertados = info_nv.get('hh_vendidas', 0)
+                    
+                    sum_gas_real = sum_gas_bruto / tasa_cambio if moneda == 'USD' else sum_gas_bruto
 
-                df_pdf = pd.DataFrame({"Concepto": ["Presupuesto", "Gasto Real"], "Monto": [info_nv['monto_vendido'], sum_gas_real]})
-                fig_pdf = px.bar(df_pdf, x="Concepto", y="Monto", color="Concepto", color_discrete_map={"Presupuesto": "#003366", "Gasto Real": "#FF6600"})
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                    fig_pdf.write_image(tmp.name, engine="kaleido")
-                    path_img = tmp.name
+                    df_pdf = pd.DataFrame({"Concepto": ["Presupuesto", "Gasto Real"], "Monto": [info_nv['monto_vendido'], sum_gas_real]})
+                    fig_pdf = px.bar(df_pdf, x="Concepto", y="Monto", color="Concepto", color_discrete_map={"Presupuesto": "#003366", "Gasto Real": "#FF6600"})
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                        fig_pdf.write_image(tmp.name, engine="kaleido")
+                        path_img = tmp.name
 
-                pdf = FPDF()
-                pdf.add_page()
-                pdf.set_font("Arial", 'B', 20)
-                pdf.set_text_color(0, 51, 102)
-                # Título del reporte editado
-                pdf.cell(0, 15, "REPORTE EJECUTIVO DE CIERRE - COORDINACIÓN FPS", ln=True, align='C')
-                pdf.ln(5)
-                
-                fmt_v_pdf = f"{info_nv['monto_vendido']:,.0f}" if moneda == 'CLP' else f"{info_nv['monto_vendido']:,.3f}"
-                fmt_g_pdf = f"{sum_gas_real:,.0f}" if moneda == 'CLP' else f"{sum_gas_real:,.3f}"
-                
-                pdf.set_font("Arial", '', 12)
-                pdf.set_text_color(0, 0, 0)
-                pdf.cell(0, 10, f"Proyecto: {nv_c_id} | Cliente: {info_nv['cliente']}", ln=True)
-                pdf.cell(0, 10, f"Lugar: {info_nv['lugar']} | Avance Final: {avg_prog:.1f}%", ln=True)
-                pdf.cell(0, 10, f"Días Ofertados: {dias_ofertados} | Días Ejecutados (Aprox): {dias_ejecutados:.1f}", ln=True)
-                pdf.cell(0, 10, f"Finanzas: {moneda} ${fmt_v_pdf} Ofertado | {moneda} ${fmt_g_pdf} Gastado", ln=True)
-                if moneda == 'USD':
-                    pdf.set_font("Arial", 'I', 9)
-                    pdf.cell(0, 5, f"(Nota: Gastos convertidos usando tasa de cambio de {tasa_cambio} CLP/USD)", ln=True)
-                
-                pdf.image(path_img, x=25, y=pdf.get_y()+5, w=160)
-                
-                pdf.add_page()
-                pdf.set_font("Arial", 'B', 14)
-                pdf.cell(0, 10, "DETALLE DE OPERACIONES EJECUTADAS", ln=True)
-                pdf.set_font("Arial", '', 10)
-                
-                if asig_list:
-                    for act, group in df_avances.groupby('actividad_ssee'):
-                        prog = group['progreso'].max()
-                        esp_list = ", ".join(group['especialista'].unique())
-                        linea = f"> {act} ({prog}%) | Técnicos: {esp_list}"
-                        pdf.cell(0, 8, linea.encode('latin-1', 'replace').decode('latin-1'), ln=True)
-                
-                st.session_state.pdf_bytes = pdf.output(dest='S').encode('latin-1', 'replace')
-                st.session_state.nv_cerrada = nv_c_id
-                os.remove(path_img)
-                
-                supabase.table("notas_venta").update({"estado":"Cerrada"}).eq("id_nv", nv_c_id).execute()
-                st.success("✅ Proyecto cerrado exitosamente.")
-                st.rerun()
+                    pdf = FPDF()
+                    pdf.add_page()
+                    pdf.set_font("Arial", 'B', 20)
+                    pdf.set_text_color(0, 51, 102)
+                    pdf.cell(0, 15, "REPORTE EJECUTIVO DE CIERRE - COORDINACIÓN FPS", ln=True, align='C')
+                    pdf.ln(5)
+                    
+                    fmt_v_pdf = f"{info_nv['monto_vendido']:,.0f}" if moneda == 'CLP' else f"{info_nv['monto_vendido']:,.3f}"
+                    fmt_g_pdf = f"{sum_gas_real:,.0f}" if moneda == 'CLP' else f"{sum_gas_real:,.3f}"
+                    
+                    pdf.set_font("Arial", '', 12)
+                    pdf.set_text_color(0, 0, 0)
+                    pdf.cell(0, 10, f"Proyecto: {nv_c_id} | Cliente: {info_nv['cliente']}", ln=True)
+                    pdf.cell(0, 10, f"Lugar: {info_nv['lugar']} | Avance Final: {avg_prog:.1f}%", ln=True)
+                    pdf.cell(0, 10, f"Días Ofertados: {dias_ofertados} | Días Ejecutados (Aprox): {dias_ejecutados:.1f}", ln=True)
+                    pdf.cell(0, 10, f"Finanzas: {moneda} ${fmt_v_pdf} Ofertado | {moneda} ${fmt_g_pdf} Gastado", ln=True)
+                    if moneda == 'USD':
+                        pdf.set_font("Arial", 'I', 9)
+                        pdf.cell(0, 5, f"(Nota: Gastos convertidos usando tasa de cambio de {tasa_cambio} CLP/USD)", ln=True)
+                    
+                    pdf.image(path_img, x=25, y=pdf.get_y()+5, w=160)
+                    
+                    pdf.add_page()
+                    pdf.set_font("Arial", 'B', 14)
+                    pdf.cell(0, 10, "DETALLE DE OPERACIONES EJECUTADAS", ln=True)
+                    pdf.set_font("Arial", '', 10)
+                    
+                    if asig_list:
+                        for act, group in df_avances.groupby('actividad_ssee'):
+                            prog = group['progreso'].max()
+                            esp_list = ", ".join(group['especialista'].unique())
+                            linea = f"> {act} ({prog}%) | Técnicos: {esp_list}"
+                            pdf.cell(0, 8, linea.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+                    
+                    st.session_state.pdf_bytes = pdf.output(dest='S').encode('latin-1', 'replace')
+                    st.session_state.nv_cerrada = nv_c_id
+                    os.remove(path_img)
+                    
+                    supabase.table("notas_venta").update({"estado":"Cerrada"}).eq("id_nv", nv_c_id).execute()
+                    st.success("✅ Proyecto cerrado exitosamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Ocurrió un error procesando el cierre: {e}")
 
         if st.session_state.pdf_bytes:
             st.download_button(
