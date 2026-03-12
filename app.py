@@ -728,6 +728,12 @@ def main_app():
                 st.write("Ajuste fechas, asigne cuadrillas y modifique el avance en tiempo real.")
                 
                 asig_all_raw = supabase.table("asignaciones_personal").select("*").eq("id_nv", nv_id_sel).execute().data
+                
+                # --- NUEVA LÓGICA: EXTRAER ESPECIALISTAS DE LA MATRIZ ---
+                especialistas_matriz = []
+                if asig_all_raw:
+                    especialistas_matriz = list(set([x['especialista'] for x in asig_all_raw if x.get('actividad_ssee') == 'PROYECCION_GLOBAL' and x.get('especialista') != 'Sin Asignar']))
+                
                 if asig_all_raw:
                     df_temp = pd.DataFrame(asig_all_raw)
                     df_temp = df_temp[df_temp['actividad_ssee'] != 'PROYECCION_GLOBAL']
@@ -780,6 +786,10 @@ def main_app():
                                     estado_badge = "🟢 Programado"
                             
                             with st.expander(f"{estado_badge} | 📌 Labor: {act} - Avance: {curr_prog}% | Esp: {len(esps_reales)}"):
+                                # MOSTRAR SUGERENCIA DE LA MATRIZ
+                                if especialistas_matriz:
+                                    st.info(f"💡 **Personal base de la Matriz Semanal:** {', '.join(especialistas_matriz)}")
+                                    
                                 with st.form(key=f"form_update_{nv_id_sel}_{act}"):
                                     
                                     if is_atrasada:
@@ -812,7 +822,11 @@ def main_app():
                                         h_fin_val = None
                                         h_diarias_val = None
                                     
-                                    nuevos_esps = col_e.multiselect("Asignar Especialistas", ESPECIALISTAS, default=esps_reales)
+                                    # AUTO-SELECCIONAR ESPECIALISTAS DE LA MATRIZ SI NO HAY ASIGNADOS AÚN
+                                    default_esps = esps_reales if esps_reales else especialistas_matriz
+                                    default_esps = [e for e in default_esps if e in ESPECIALISTAS] # Prevención de errores
+                                    
+                                    nuevos_esps = col_e.multiselect("Asignar Especialistas", ESPECIALISTAS, default=default_esps)
                                     
                                     if st.form_submit_button("Guardar Programación / Avance", use_container_width=True):
                                         if is_atrasada and not just_val.strip():
