@@ -194,11 +194,13 @@ def obtener_nvs(estado_filter=None):
     if estado_filter: query = query.eq("estado", estado_filter)
     return query.execute().data
 
-# --- CONTROL DE SESIÓN (AUTENTICACIÓN) ---
+# --- CONTROL DE SESIÓN (AUTENTICACIÓN Y ESTADO DE FORMULARIOS) ---
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'user_email' not in st.session_state:
     st.session_state.user_email = ""
+if 'form_key_comercial' not in st.session_state:
+    st.session_state.form_key_comercial = 0
 
 def logout():
     try:
@@ -263,7 +265,7 @@ def main_app():
     ])
 
     # ==========================================
-    # MÓDULO 1: COMERCIAL 
+    # MÓDULO 1: COMERCIAL (CON DETECCIÓN DE CONFLICTOS Y HORARIOS SE TERRENO)
     # ==========================================
     with tab1:
         st.header("Gestión Comercial (Presupuesto)")
@@ -320,6 +322,7 @@ def main_app():
                                 
                             st.session_state.nv_pending = None
                             st.session_state.nv_conflicts = []
+                            st.session_state.form_key_comercial += 1 # Limpiar formulario post-guardado
                             st.success(f"✅ NV {payload['id_nv']} guardada y Matriz Semanal actualizada según sus instrucciones.")
                             st.rerun()
                         except Exception as e:
@@ -332,8 +335,17 @@ def main_app():
                         st.rerun()
                         
             else:
-                with st.form("form_comercial"):
+                # Encabezado con Botón de Refresco Integrado
+                col_t1, col_t2 = st.columns([3, 1])
+                with col_t1:
                     st.subheader("Crear Nueva Nota de Venta")
+                with col_t2:
+                    if st.button("🔄 Nueva / Limpiar", use_container_width=True, help="Limpia todos los campos del formulario actual."):
+                        st.session_state.form_key_comercial += 1
+                        st.rerun()
+
+                # El form_key dinámico permite reiniciar los widgets cuando sumamos 1 al contador
+                with st.form(key=f"form_comercial_{st.session_state.form_key_comercial}"):
                     c1, c2, c3 = st.columns(3)
                     id_nv = c1.text_input("ID Nota de Venta")
                     cliente = c1.text_input("Cliente")
@@ -420,6 +432,7 @@ def main_app():
                                                 safe_insert_asignacion(p_asig)
                                                 
                                             st.success(f"✅ NV {id_nv} registrada exitosamente.")
+                                            st.session_state.form_key_comercial += 1
                                             st.rerun()
                                     else:
                                         supabase.table("notas_venta").insert({
@@ -428,6 +441,7 @@ def main_app():
                                             "hh_vendidas": dias_v, "estado": "Abierta"
                                         }).execute()
                                         st.success(f"✅ NV {id_nv} registrada exitosamente.")
+                                        st.session_state.form_key_comercial += 1
                                         st.rerun()
                             except Exception as e:
                                 st.error(f"❌ Ocurrió un error al guardar en la base de datos: {e}")
