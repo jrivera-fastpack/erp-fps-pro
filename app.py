@@ -92,10 +92,6 @@ except Exception:
 
 # --- FUNCIÓN DE INSERCIÓN BLINDADA ---
 def safe_insert_asignacion(payload):
-    """
-    Intenta insertar en asignaciones_personal. Si la BD no tiene aún las columnas 
-    nuevas (dias_extras, hora_inicio_t, etc.), las elimina del payload temporalmente para no crashear.
-    """
     try:
         return supabase.table("asignaciones_personal").insert(payload).execute()
     except Exception as ex_db:
@@ -136,7 +132,7 @@ FERIADOS_CHILE_2026 = [
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 MESES_ES = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
 
-# --- FUNCIONES AUXILIARES CORREGIDAS (CÁLCULOS EXACTOS) ---
+# --- FUNCIONES AUXILIARES CORREGIDAS ---
 def calcular_fecha_fin_dinamica(f_ini, dias_totales, incluye_finde):
     if dias_totales <= 0:
         return f_ini
@@ -194,7 +190,7 @@ def obtener_nvs(estado_filter=None):
     if estado_filter: query = query.eq("estado", estado_filter)
     return query.execute().data
 
-# --- CONTROL DE SESIÓN (AUTENTICACIÓN Y ESTADO DE FORMULARIOS) ---
+# --- CONTROL DE SESIÓN ---
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'user_email' not in st.session_state:
@@ -265,7 +261,7 @@ def main_app():
     ])
 
     # ==========================================
-    # MÓDULO 1: COMERCIAL (CON DETECCIÓN DE CONFLICTOS Y HORARIOS SE TERRENO)
+    # MÓDULO 1: COMERCIAL
     # ==========================================
     with tab1:
         st.header("Gestión Comercial (Presupuesto)")
@@ -322,8 +318,8 @@ def main_app():
                                 
                             st.session_state.nv_pending = None
                             st.session_state.nv_conflicts = []
-                            st.session_state.form_key_comercial += 1 # Limpiar formulario post-guardado
-                            st.success(f"✅ NV {payload['id_nv']} guardada y Matriz Semanal actualizada según sus instrucciones.")
+                            st.session_state.form_key_comercial += 1
+                            st.success(f"✅ NV {payload['id_nv']} guardada y Matriz Semanal actualizada.")
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Ocurrió un error al guardar: {e}")
@@ -335,16 +331,14 @@ def main_app():
                         st.rerun()
                         
             else:
-                # Encabezado con Botón de Refresco Integrado
                 col_t1, col_t2 = st.columns([3, 1])
                 with col_t1:
                     st.subheader("Crear Nueva Nota de Venta")
                 with col_t2:
-                    if st.button("🔄 Nueva / Limpiar", use_container_width=True, help="Limpia todos los campos del formulario actual."):
+                    if st.button("🔄 Nueva / Limpiar", use_container_width=True):
                         st.session_state.form_key_comercial += 1
                         st.rerun()
 
-                # El form_key dinámico permite reiniciar los widgets cuando sumamos 1 al contador
                 with st.form(key=f"form_comercial_{st.session_state.form_key_comercial}"):
                     c1, c2, c3 = st.columns(3)
                     id_nv = c1.text_input("ID Nota de Venta")
@@ -597,7 +591,6 @@ def main_app():
                         
         st.divider()
         
-        # --- LÓGICA: SELECCIÓN DE FECHA DE INICIO PARA VER HISTORIAL ---
         col_start, col_days = st.columns(2)
         fecha_base_matriz = col_start.date_input("📅 Fecha de inicio de la matriz (Puedes elegir fechas pasadas)", value=datetime.today().date(), key="inicio_matriz")
         dias_a_mostrar = col_days.slider("Días a visualizar hacia adelante", 1, 60, 14) 
@@ -622,7 +615,6 @@ def main_app():
                 f_i = pd.to_datetime(a['fecha_inicio']).date()
                 f_f = pd.to_datetime(a['fecha_fin']).date()
                 
-                # 1. Pintar Ausencias Primero
                 if a['id_nv'] == 'AUSENCIA':
                     for i in range((f_f - f_i).days + 1):
                         d = f_i + timedelta(days=i)
@@ -631,7 +623,6 @@ def main_app():
                             etiqueta = f"🌴 {a['actividad_ssee']}"
                             matriz_final.at[a['especialista'], col] = etiqueta
                 
-                # 2. Pintar Proyecciones Globales (No sobreescribir ausencias)
                 elif a.get('actividad_ssee') == 'PROYECCION_GLOBAL':
                     trabajo_continuo = (a.get('comentarios') == 'EXTRAS')
                     cliente_nombre = mapa_clientes.get(a['id_nv'], 'Proyectado')
@@ -644,7 +635,6 @@ def main_app():
                             col = d.strftime("%d-%m-%Y")
                             valor_actual = str(matriz_final.at[a['especialista'], col])
                             
-                            # Solo escribimos si el técnico NO está de vacaciones/ausente ese día
                             if '🌴' not in valor_actual:
                                 etiqueta = f"{a['id_nv']} [{cliente_nombre}]"
                                 if valor_actual in ["🟢 Disponible", "⌛ No Hábil"]: 
@@ -654,7 +644,6 @@ def main_app():
         
         matriz_final.columns = nombres_columnas_display
         
-        # Función de estilos para pintar la matriz
         def style_matrix(x):
             texto = str(x)
             if 'No Hábil' in texto: return 'background-color: #F0F0F0; color: #A0A0A0'
@@ -729,7 +718,6 @@ def main_app():
                 
                 asig_all_raw = supabase.table("asignaciones_personal").select("*").eq("id_nv", nv_id_sel).execute().data
                 
-                # --- NUEVA LÓGICA: EXTRAER ESPECIALISTAS DE LA MATRIZ ---
                 especialistas_matriz = []
                 if asig_all_raw:
                     especialistas_matriz = list(set([x['especialista'] for x in asig_all_raw if x.get('actividad_ssee') == 'PROYECCION_GLOBAL' and x.get('especialista') != 'Sin Asignar']))
@@ -786,7 +774,6 @@ def main_app():
                                     estado_badge = "🟢 Programado"
                             
                             with st.expander(f"{estado_badge} | 📌 Labor: {act} - Avance: {curr_prog}% | Esp: {len(esps_reales)}"):
-                                # MOSTRAR SUGERENCIA DE LA MATRIZ
                                 if especialistas_matriz:
                                     st.info(f"💡 **Personal base de la Matriz Semanal:** {', '.join(especialistas_matriz)}")
                                     
@@ -822,9 +809,8 @@ def main_app():
                                         h_fin_val = None
                                         h_diarias_val = None
                                     
-                                    # AUTO-SELECCIONAR ESPECIALISTAS DE LA MATRIZ SI NO HAY ASIGNADOS AÚN
                                     default_esps = esps_reales if esps_reales else especialistas_matriz
-                                    default_esps = [e for e in default_esps if e in ESPECIALISTAS] # Prevención de errores
+                                    default_esps = [e for e in default_esps if e in ESPECIALISTAS] 
                                     
                                     nuevos_esps = col_e.multiselect("Asignar Especialistas", ESPECIALISTAS, default=default_esps)
                                     
@@ -908,7 +894,6 @@ def main_app():
                 df_g['cliente'] = df_g['id_nv'].map(nvs_info)
                 df_g['Labor'] = df_g['actividad_ssee'].fillna('Servicio Terreno')
                 
-                # ADAPTACIÓN PARA HORARIOS PERSONALIZADOS (TURNOS DE NOCHE/TERRENO)
                 if 'hora_inicio_t' in df_g.columns:
                     df_g['hora_i_str'] = df_g['hora_inicio_t'].fillna('08:00').replace('', '08:00')
                     df_g['hora_f_str'] = df_g['hora_fin_t'].fillna('17:30').replace('', '17:30')
@@ -1019,7 +1004,6 @@ def main_app():
                             )
                         curr += timedelta(days=1)
                 
-                # ADAPTACIÓN VISUAL: Si hay horarios especiales (turnos nocturnos, etc.) eliminamos el bloqueo de la franja nocturna.
                 breaks = []
                 has_custom_hours = False
                 if 'hora_inicio_t' in df_g.columns:
@@ -1061,7 +1045,7 @@ def main_app():
                 st.info("Aún no hay actividades agregadas al alcance para la vista seleccionada.")
 
     # ==========================================
-    # MÓDULO 4: GASTOS Y KPIs (BI MEJORADO)
+    # MÓDULO 4: GASTOS Y KPIs (FACTURACIÓN POR HITOS)
     # ==========================================
     with tab4:
         st.header("Análisis de Datos y Control Financiero")
@@ -1070,6 +1054,13 @@ def main_app():
         if not nvs_all:
             st.warning("No hay notas de venta registradas para analizar.")
         else:
+            # --- OBTENCIÓN SEGURA DE HITOS ---
+            try:
+                hitos_raw = supabase.table("hitos_facturacion").select("*").execute().data
+                df_hitos = pd.DataFrame(hitos_raw) if hitos_raw else pd.DataFrame(columns=["id", "id_nv", "mes", "anio", "porcentaje", "monto", "estado"])
+            except Exception:
+                df_hitos = pd.DataFrame(columns=["id", "id_nv", "mes", "anio", "porcentaje", "monto", "estado"])
+
             # REGISTRO DE GASTOS
             nvs_activas = obtener_nvs("Abierta")
             if nvs_activas:
@@ -1098,9 +1089,7 @@ def main_app():
             df_nv = pd.DataFrame(nvs_all)
             gastos_raw = supabase.table("control_gastos").select("*").execute().data
             df_gastos_full = pd.DataFrame(gastos_raw) if gastos_raw else pd.DataFrame(columns=['id_nv', 'monto_gasto', 'tipo_gasto', 'fecha_gasto'])
-            
             df_gas_agg = df_gastos_full.groupby('id_nv')['monto_gasto'].sum().reset_index() if not df_gastos_full.empty else pd.DataFrame(columns=['id_nv', 'monto_gasto'])
-            
             asig_all_raw = supabase.table("asignaciones_personal").select("*").execute().data
             
             df_ausencias = pd.DataFrame()
@@ -1114,7 +1103,6 @@ def main_app():
                 if not df_hh_raw.empty:
                     df_hh_agg = df_hh_raw.groupby('id_nv')['hh_asignadas'].sum().reset_index()
                     df_hh_agg['dias_ejecutados'] = df_hh_agg['hh_asignadas'] / 9.0 
-                    
                     df_prog_nv = df_hh_raw.groupby(['id_nv', 'actividad_ssee'])['progreso'].max().reset_index()
                     df_prog_sum = df_prog_nv.groupby('id_nv')['progreso'].sum().reset_index()
                     df_prog_sum = df_prog_sum.merge(df_nv[['id_nv', 'tipo_servicio']], on='id_nv', how='left')
@@ -1128,7 +1116,6 @@ def main_app():
                             
                     df_prog_sum['Avance_%'] = df_prog_sum.apply(calc_avance, axis=1)
                     df_prog_avg = df_prog_sum[['id_nv', 'Avance_%']]
-                    
                     df_hh_agg = df_hh_agg.merge(df_prog_avg, on='id_nv', how='left')
                 else:
                     df_hh_agg = pd.DataFrame(columns=['id_nv', 'hh_asignadas', 'dias_ejecutados', 'Avance_%'])
@@ -1140,27 +1127,15 @@ def main_app():
             df_kpi['id_nv_str'] = df_kpi['id_nv'].astype(str)
             df_kpi['Proyecto_Label'] = df_kpi['id_nv_str'] + " (" + df_kpi['cliente'] + ")"
             
-            # --- MANEJO SEGURO COLUMNA ESTADO FACTURACIÓN ---
-            if 'estado_facturacion' not in df_kpi.columns:
-                df_kpi['estado_facturacion'] = 'Pendiente'
-            else:
-                df_kpi['estado_facturacion'] = df_kpi['estado_facturacion'].fillna('Pendiente')
-            
             if 'created_at' in df_kpi.columns:
                 df_kpi['fecha_creacion'] = pd.to_datetime(df_kpi['created_at'], errors='coerce').dt.date
                 df_kpi['fecha_creacion'] = df_kpi['fecha_creacion'].fillna(datetime.today().date())
             else:
                 df_kpi['fecha_creacion'] = datetime.today().date()
-                
-            min_date_val = df_kpi['fecha_creacion'].min()
-            if pd.isnull(min_date_val): min_date_val = datetime.today().date() - timedelta(days=30)
-            max_date_val = df_kpi['fecha_creacion'].max()
-            if pd.isnull(max_date_val): max_date_val = datetime.today().date()
             
             df_kpi['monto_gasto_ajustado'] = df_kpi.apply(lambda row: row['monto_gasto'] / tasa_cambio if row['moneda'] == 'USD' else row['monto_gasto'], axis=1)
             df_kpi['Margen'] = df_kpi['monto_vendido'] - df_kpi['monto_gasto_ajustado']
 
-            # --- SUB PESTAÑAS DE ANÁLISIS ---
             tab_global, tab_individual, tab_tabla, tab_pendientes = st.tabs([
                 "🌍 Global Mensual", 
                 "🔍 Análisis Individual", 
@@ -1172,7 +1147,6 @@ def main_app():
                 st.subheader("Visión Financiera Corporativa Mensual (Consolidada)")
                 
                 c_filt1, c_filt2 = st.columns(2)
-                
                 año_actual = datetime.today().year
                 mes_actual = datetime.today().month
                 lista_anios = list(range(año_actual - 2, año_actual + 2))
@@ -1181,7 +1155,6 @@ def main_app():
                 anio_sel = c_filt2.selectbox("Seleccione el Año:", lista_anios, index=lista_anios.index(año_actual))
                 
                 mes_num = list(MESES_ES.keys())[list(MESES_ES.values()).index(mes_sel)]
-                
                 _, ultimo_dia = calendar.monthrange(anio_sel, mes_num)
                 fecha_inicio_mes = datetime(anio_sel, mes_num, 1).date()
                 fecha_fin_mes = datetime(anio_sel, mes_num, ultimo_dia).date()
@@ -1254,7 +1227,6 @@ def main_app():
                     
                     with c_graf2:
                         df_kpi_mes_sorted = df_kpi_mes.sort_values('Avance_%', ascending=True)
-                        
                         fig_ranking = px.bar(
                             df_kpi_mes_sorted, 
                             y="Proyecto_Label", 
@@ -1270,7 +1242,6 @@ def main_app():
 
             with tab_individual:
                 st.subheader("Buscador Analítico de Proyectos")
-                
                 nv_seleccionada = st.selectbox("Escriba o Seleccione la Nota de Venta / Cliente:", df_kpi['Proyecto_Label'].tolist())
                 
                 if nv_seleccionada:
@@ -1346,29 +1317,16 @@ def main_app():
                             "Concepto": ["Horas Vendidas (Plan)", "Horas Reales (Ejecutadas)"],
                             "Horas": [hh_p, hh_e]
                         })
-                        
                         color_real = "#E74C3C" if hh_e > hh_p else "#2ECC71"
-                        
                         fig_bar_hh = px.bar(
-                            df_hh_comp, 
-                            x="Concepto", 
-                            y="Horas", 
-                            color="Concepto", 
-                            text="Horas",
+                            df_hh_comp, x="Concepto", y="Horas", color="Concepto", text="Horas",
                             color_discrete_map={"Horas Vendidas (Plan)": "#3498DB", "Horas Reales (Ejecutadas)": color_real},
                             title="Balance de Horas (Vendidas vs Reales)"
                         )
                         fig_bar_hh.update_traces(texttemplate='%{text:.1f} HH', textposition='outside')
-                        fig_bar_hh.update_layout(
-                            yaxis_title="Cantidad de Horas (HH)", 
-                            showlegend=False, 
-                            plot_bgcolor='white',
-                            height=350,
-                            margin=dict(l=20, r=20, t=50, b=20)
-                        )
+                        fig_bar_hh.update_layout(yaxis_title="Cantidad de Horas (HH)", showlegend=False, plot_bgcolor='white', height=350, margin=dict(l=20, r=20, t=50, b=20))
                         max_h = max(hh_p, hh_e)
                         fig_bar_hh.update_yaxes(range=[0, max_h * 1.2])
-                        
                         st.plotly_chart(fig_bar_hh, use_container_width=True)
 
                         st.markdown("**📝 Comentarios y Detalles de Ejecución**")
@@ -1378,7 +1336,6 @@ def main_app():
                             if not df_comentarios.empty:
                                 df_comentarios['actividad_ssee'] = df_comentarios['actividad_ssee'].fillna("Labor en Terreno")
                                 has_extra_cols = 'dias_extras' in df_comentarios.columns
-                                
                                 if has_extra_cols:
                                     df_comentarios['dias_extras'] = pd.to_numeric(df_comentarios['dias_extras'], errors='coerce').fillna(0)
                                     df_comentarios['justificacion'] = df_comentarios['justificacion'].fillna("")
@@ -1412,82 +1369,149 @@ def main_app():
                         if not df_detalles.empty:
                             df_det_display = df_detalles[['fecha_gasto', 'tipo_gasto', 'monto_gasto']].copy()
                             df_det_display.rename(columns={'fecha_gasto': 'Fecha', 'tipo_gasto': 'Ítem', 'monto_gasto': 'Monto (CLP)'}, inplace=True)
-                            
                             if mon == 'USD':
                                 df_det_display['Equivalente (USD)'] = df_det_display['Monto (CLP)'] / tasa_cambio
                                 df_det_display['Equivalente (USD)'] = df_det_display['Equivalente (USD)'].apply(lambda x: f"USD ${x:,.3f}")
-                            
                             df_det_display['Monto (CLP)'] = df_det_display['Monto (CLP)'].apply(lambda x: f"CLP ${x:,.0f}")
-                            
                             st.dataframe(df_det_display, use_container_width=True, hide_index=True)
                         else:
                             st.info("Sin gastos registrados.")
 
-            # --- NUEVA PESTAÑA: TABLA GENERAL Y FACTURACIÓN ---
+            # --- NUEVA PESTAÑA: TABLA GENERAL Y FACTURACIÓN POR PARCIALIDADES (HITOS) ---
             with tab_tabla:
                 st.subheader("Tabla General y Control de Facturación Mensual")
-                st.info("Visualiza todos los proyectos del mes seleccionado y actualiza su estado de facturación para tus proyecciones.")
                 
                 c_tbl1, c_tbl2 = st.columns(2)
                 mes_sel_t = c_tbl1.selectbox("Filtrar por Mes:", list(MESES_ES.values()), index=mes_actual-1, key="mes_tbl")
                 anio_sel_t = c_tbl2.selectbox("Filtrar por Año:", lista_anios, index=lista_anios.index(año_actual), key="anio_tbl")
-                
                 mes_num_t = list(MESES_ES.keys())[list(MESES_ES.values()).index(mes_sel_t)]
+                
+                st.markdown(f"### 💸 1. Pronóstico de Facturación para {mes_sel_t} {anio_sel_t}")
+                st.info("Visualiza las parcialidades (hitos) que han sido programadas para facturarse en este mes específico.")
+                
+                if not df_hitos.empty:
+                    df_hitos_mes = df_hitos[(df_hitos['mes'] == mes_num_t) & (df_hitos['anio'] == anio_sel_t)].copy()
+                    if not df_hitos_mes.empty:
+                        # Extraer info del proyecto para la tabla
+                        df_hitos_mes = df_hitos_mes.merge(df_kpi[['id_nv', 'cliente', 'moneda']], on='id_nv', how='left')
+                        
+                        # Sumar total pronosticado en USD
+                        df_hitos_mes['monto_usd'] = df_hitos_mes.apply(lambda r: r['monto'] if r['moneda'] == 'USD' else r['monto'] / tasa_cambio, axis=1)
+                        tot_fact_est = df_hitos_mes['monto_usd'].sum()
+                        st.metric("Total Pronosticado a Facturar (USD Equivalente)", f"USD ${tot_fact_est:,.2f}")
+                        
+                        df_show_hitos = df_hitos_mes[['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
+                        df_show_hitos.rename(columns={'id_nv':'NV', 'cliente':'Cliente', 'moneda':'Moneda', 'porcentaje':'% a Cobrar', 'monto':'Monto Parcial', 'estado':'Estado Factura'}, inplace=True)
+                        st.dataframe(df_show_hitos, use_container_width=True, hide_index=True)
+                        
+                        with st.expander("🔄 Actualizar Estado de una Factura del mes"):
+                            c_up1, c_up2 = st.columns(2)
+                            id_h_up = c_up1.selectbox("Seleccione el ID de la Parcialidad:", df_show_hitos['id'].tolist())
+                            nuevo_est_h = c_up2.selectbox("Nuevo Estado:", ["Pendiente", "Facturada", "Postergada"])
+                            if st.button("Actualizar Hito", use_container_width=True):
+                                try:
+                                    supabase.table("hitos_facturacion").update({"estado": nuevo_est_h}).eq("id", id_h_up).execute()
+                                    st.success(f"Hito {id_h_up} actualizado a {nuevo_est_h}.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error al actualizar: {e}")
+                    else:
+                        st.write("No hay parcialidades de facturación programadas para este mes.")
+                else:
+                    st.write("No hay parcialidades de facturación creadas en la base de datos.")
+                
+                st.divider()
+                st.markdown("### ⚙️ 2. Administrar Parcialidades por Proyecto")
+                with st.expander("Crear y revisar hitos de cobro de una NV específica", expanded=True):
+                    nv_hitos_sel = st.selectbox("Seleccione Proyecto para planificar:", df_kpi['Proyecto_Label'].tolist())
+                    if nv_hitos_sel:
+                        row_h = df_kpi[df_kpi['Proyecto_Label'] == nv_hitos_sel].iloc[0]
+                        id_nv_h = row_h['id_nv']
+                        monto_tot_h = row_h['monto_vendido']
+                        moneda_h = row_h['moneda']
+                        
+                        df_hitos_nv = df_hitos[df_hitos['id_nv'] == id_nv_h]
+                        pct_planeado = df_hitos_nv['porcentaje'].sum() if not df_hitos_nv.empty else 0
+                        pct_restante = 100.0 - float(pct_planeado)
+                        
+                        st.write(f"**Monto Total Proyecto:** {moneda_h} ${monto_tot_h:,.2f} | **Planificado:** {pct_planeado}% | **Por Planificar:** {pct_restante}%")
+                        
+                        if not df_hitos_nv.empty:
+                            df_hnv_show = df_hitos_nv[['id', 'mes', 'anio', 'porcentaje', 'monto', 'estado']].copy()
+                            df_hnv_show['mes'] = df_hnv_show['mes'].apply(lambda x: MESES_ES.get(x, x))
+                            st.dataframe(df_hnv_show, use_container_width=True, hide_index=True)
+                            
+                            if st.button("🗑️ Borrar todos los hitos de esta NV"):
+                                try:
+                                    supabase.table("hitos_facturacion").delete().eq("id_nv", id_nv_h).execute()
+                                    st.success("Hitos eliminados. Puede volver a planificar.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error("Error al eliminar hitos.")
+                            
+                        if pct_restante > 0:
+                            st.markdown("Añadir nueva parcialidad:")
+                            with st.form("form_add_hito"):
+                                c_hm, c_ha, c_hp = st.columns(3)
+                                h_mes = c_hm.selectbox("Mes de Facturación", list(MESES_ES.values()))
+                                h_anio = c_ha.selectbox("Año", lista_anios, index=lista_anios.index(año_actual))
+                                h_pct = c_hp.number_input("Porcentaje (%) a cobrar", min_value=0.1, max_value=float(pct_restante), step=1.0)
+                                
+                                if st.form_submit_button("Agregar Hito de Cobro", use_container_width=True):
+                                    mes_n = list(MESES_ES.keys())[list(MESES_ES.values()).index(h_mes)]
+                                    monto_calc = (h_pct / 100.0) * monto_tot_h
+                                    try:
+                                        supabase.table("hitos_facturacion").insert({
+                                            "id_nv": id_nv_h,
+                                            "mes": mes_n,
+                                            "anio": h_anio,
+                                            "porcentaje": h_pct,
+                                            "monto": monto_calc,
+                                            "estado": "Pendiente"
+                                        }).execute()
+                                        st.success("Hito de facturación agregado.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Error: Asegúrese de ejecutar primero la actualización SQL de la base de datos.")
+                        else:
+                            st.success("✅ El 100% de este proyecto ya ha sido planificado en hitos.")
+
+                st.divider()
+                st.markdown("### 📋 3. Resumen Operativo (Proyectos creados en el mes)")
                 _, ultimo_dia_t = calendar.monthrange(anio_sel_t, mes_num_t)
                 fecha_inicio_t = datetime(anio_sel_t, mes_num_t, 1).date()
                 fecha_fin_t = datetime(anio_sel_t, mes_num_t, ultimo_dia_t).date()
-                
                 df_kpi_tabla = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_t) & (df_kpi['fecha_creacion'] <= fecha_fin_t)].copy()
                 
                 if not df_kpi_tabla.empty:
-                    cols_to_show = ['id_nv', 'cliente', 'moneda', 'monto_vendido', 'monto_gasto', 'hh_asignadas', 'estado', 'estado_facturacion']
+                    cols_to_show = ['id_nv', 'cliente', 'moneda', 'monto_vendido', 'monto_gasto', 'hh_asignadas', 'estado']
                     df_display = df_kpi_tabla[cols_to_show].rename(columns={
                         'id_nv': 'NV', 'cliente': 'Cliente', 'moneda': 'Moneda', 
                         'monto_vendido': 'Monto Ofertado', 'monto_gasto': 'Gastos Rendición (CLP)', 
-                        'hh_asignadas': 'Total HH Utilizadas', 'estado': 'Estado Operativo', 
-                        'estado_facturacion': 'Estado Facturación'
+                        'hh_asignadas': 'Total HH Utilizadas', 'estado': 'Estado Operativo'
                     })
-                    
                     st.dataframe(df_display, use_container_width=True, hide_index=True)
-                    
-                    st.divider()
-                    st.markdown("#### 🔄 Actualizar Pronóstico de Facturación")
-                    with st.form("form_facturacion"):
-                        c_u1, c_u2 = st.columns(2)
-                        nv_to_update = c_u1.selectbox("Seleccione la Nota de Venta a actualizar:", df_kpi_tabla['id_nv'].tolist())
-                        nuevo_estado_fact = c_u2.selectbox("Nuevo Estado de Facturación:", ["Pendiente", "Facturada", "Facturada Mes Siguiente"])
-                        
-                        if st.form_submit_button("Guardar Estado"):
-                            try:
-                                supabase.table("notas_venta").update({"estado_facturacion": nuevo_estado_fact}).eq("id_nv", nv_to_update).execute()
-                                st.success(f"✅ Facturación de {nv_to_update} actualizada correctamente a: {nuevo_estado_fact}")
-                                st.rerun()
-                            except Exception as e:
-                                st.error("❌ Error: Asegúrese de haber ejecutado el código SQL para añadir la columna 'estado_facturacion'.")
                 else:
-                    st.info(f"No hay registros comerciales en {mes_sel_t} de {anio_sel_t}.")
+                    st.info("No hay registros comerciales en este mes.")
 
             # --- NUEVA PESTAÑA: BACKLOG Y PENDIENTES ---
             with tab_pendientes:
                 st.subheader("Servicios Pendientes (Backlog de Ejecución)")
                 st.info("Aquí se listan todos los proyectos que están Abiertos y que aún tienen un **0% de avance físico**, lo que representa el trabajo atrasado o por venir.")
                 
-                # Filtramos proyectos Abiertos con 0 progreso
                 df_pendientes = df_kpi[(df_kpi['Avance_%'] == 0) & (df_kpi['estado'] == 'Abierta')].copy()
                 
                 if not df_pendientes.empty:
-                    # Calcular total pendiente en USD para tener un estimado del volumen estancado
                     df_pendientes['monto_usd_est'] = df_pendientes.apply(lambda row: row['monto_vendido'] if row['moneda'] == 'USD' else row['monto_vendido'] / tasa_cambio, axis=1)
                     total_pendiente_usd = df_pendientes['monto_usd_est'].sum()
                     
                     st.metric("Total Cartera Pendiente por Ejecutar (Equivalente USD)", f"USD ${total_pendiente_usd:,.2f}")
                     st.markdown("<br>", unsafe_allow_html=True)
                     
-                    cols_pend = ['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'monto_vendido', 'estado_facturacion']
+                    cols_pend = ['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'monto_vendido']
                     df_pend_display = df_pendientes[cols_pend].rename(columns={
                         'id_nv': 'NV', 'cliente': 'Cliente', 'tipo_servicio': 'Tipo', 
-                        'moneda': 'Moneda', 'monto_vendido': 'Monto Ofertado', 
-                        'estado_facturacion': 'Facturación'
+                        'moneda': 'Moneda', 'monto_vendido': 'Monto Ofertado'
                     })
                     
                     st.dataframe(df_pend_display, use_container_width=True, hide_index=True)
