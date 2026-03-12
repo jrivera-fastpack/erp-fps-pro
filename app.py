@@ -1032,6 +1032,21 @@ def main_app():
             df_kpi = df_nv.merge(df_gas_agg, on='id_nv', how='left').merge(df_hh_agg, on='id_nv', how='left').fillna(0)
             df_kpi.rename(columns={'hh_vendidas': 'dias_proyectados'}, inplace=True)
             df_kpi['id_nv_str'] = df_kpi['id_nv'].astype(str)
+            
+            # Restauración de variables para evitar KeyError:
+            df_kpi['Proyecto_Label'] = df_kpi['id_nv_str'] + " (" + df_kpi['cliente'] + ")"
+            
+            if 'created_at' in df_kpi.columns:
+                df_kpi['fecha_creacion'] = pd.to_datetime(df_kpi['created_at'], errors='coerce').dt.date
+                df_kpi['fecha_creacion'] = df_kpi['fecha_creacion'].fillna(datetime.today().date())
+            else:
+                df_kpi['fecha_creacion'] = datetime.today().date()
+                
+            min_date_val = df_kpi['fecha_creacion'].min()
+            if pd.isnull(min_date_val): min_date_val = datetime.today().date() - timedelta(days=30)
+            max_date_val = df_kpi['fecha_creacion'].max()
+            if pd.isnull(max_date_val): max_date_val = datetime.today().date()
+            
             # Conversión Financiera
             df_kpi['monto_gasto_ajustado'] = df_kpi.apply(lambda row: row['monto_gasto'] / tasa_cambio if row['moneda'] == 'USD' else row['monto_gasto'], axis=1)
             df_kpi['Margen'] = df_kpi['monto_vendido'] - df_kpi['monto_gasto_ajustado']
@@ -1043,15 +1058,16 @@ def main_app():
                 st.subheader("Visión Financiera Corporativa Mensual")
                 
                 # --- FILTROS GLOBALES (AHORA POR MES/AÑO) ---
-                c_filt1, c_filt2 = st.columns(2)
+                c_filt1, c_filt2, c_filt3 = st.columns(3)
+                moneda_global = c_filt1.radio("Seleccione Moneda:", ["CLP", "USD"], horizontal=True)
                 
                 # Selectores de Mes y Año para control estadístico real
                 año_actual = datetime.today().year
                 mes_actual = datetime.today().month
                 lista_anios = list(range(año_actual - 2, año_actual + 2))
                 
-                mes_sel = c_filt1.selectbox("Seleccione el Mes:", list(MESES_ES.values()), index=mes_actual-1)
-                anio_sel = c_filt2.selectbox("Seleccione el Año:", lista_anios, index=lista_anios.index(año_actual))
+                mes_sel = c_filt2.selectbox("Seleccione el Mes:", list(MESES_ES.values()), index=mes_actual-1)
+                anio_sel = c_filt3.selectbox("Seleccione el Año:", lista_anios, index=lista_anios.index(año_actual))
                 
                 # Obtener el número del mes seleccionado
                 mes_num = list(MESES_ES.keys())[list(MESES_ES.values()).index(mes_sel)]
@@ -1061,8 +1077,8 @@ def main_app():
                 fecha_inicio_mes = datetime(anio_sel, mes_num, 1).date()
                 fecha_fin_mes = datetime(anio_sel, mes_num, ultimo_dia).date()
                 
-                # Aplicar filtros (Filtra TODOS los proyectos creados en el mes seleccionado, consolidando monedas)
-                df_kpi_mes = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)].copy()
+                # Aplicar filtros (Filtrar proyectos creados en el mes seleccionado)
+                df_kpi_moneda = df_kpi[(df_kpi['moneda'] == moneda_global) & (df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)]
                 
                 # Cálculo de Capacidad Total de Equipo en el Mes (Descontando Fines de semana y feriados)
                 dias_habiles_mes = 0
@@ -1091,29 +1107,27 @@ def main_app():
                 
                 capacidad_neta_mes = int(capacidad_total_teorica - dias_ausencia_mes)
                 
-                if df_kpi_mes.empty:
-                    st.info(f"No hay proyectos registrados operando durante {mes_sel} de {anio_sel}.")
+                if df_kpi_moneda.empty:
+                    st.info(f"No hay proyectos registrados operando en {moneda_global} durante {mes_sel} de {anio_sel}.")
                 else:
-                    # CONSOLIDACIÓN A DÓLARES (USD)
-                    df_kpi_mes['venta_usd_consolidada'] = df_kpi_mes.apply(lambda row: row['monto_vendido'] if row['moneda'] == 'USD' else row['monto_vendido'] / tasa_cambio, axis=1)
-                    total_venta_usd = df_kpi_mes['venta_usd_consolidada'].sum()
+                    total_venta = df_kpi_moneda['monto_vendido'].sum()
                     
-                    # GASTOS SIEMPRE EN CLP
-                    total_gasto_clp = df_kpi_mes['monto_gasto'].sum()
+                    # MODIFICACIÓN: Siempre sumamos la columna 'monto_gasto' original que está en CLP
+                    total_gasto_clp = df_kpi_moneda['monto_gasto'].sum()
                     
-                    fmt_tot = f"USD ${total_venta_usd:,.2f}"
+                    fmt_tot = f"{moneda_global} ${total_venta:,.0f}" if moneda_global == 'CLP' else f"{moneda_global} ${total_venta:,.3f}"
                     fmt_gas_clp = f"CLP ${total_gasto_clp:,.0f}"
                     
                     col1, col2 = st.columns(2)
-                    col1.metric(f"Cartera Ofertada Consolidada en {mes_sel}", fmt_tot)
+                    col1.metric(f"Cartera Ofertada en {mes_sel}", fmt_tot)
                     col2.metric("Ejecución de Gasto Acumulado (CLP)", fmt_gas_clp)
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     c_graf1, c_graf2 = st.columns(2)
                     
                     with c_graf1:
-                        total_dias_proyectados = int(round(df_kpi_mes['dias_proyectados'].sum()))
-                        total_dias_ejecutados = int(round(df_kpi_mes['dias_ejecutados'].sum()))
+                        total_dias_proyectados = int(round(df_kpi_moneda['dias_proyectados'].sum()))
+                        total_dias_ejecutados = int(round(df_kpi_moneda['dias_ejecutados'].sum()))
                         df_tiempos = pd.DataFrame({
                             "Concepto": [f"Capacidad Neta Mes ({dias_habiles_mes} hábiles)", "Días Planificados (Vendidos)", "Días Consumidos (Reales)", "Días Ausencia RRHH (Desc.)"],
                             "Cantidad": [capacidad_neta_mes, total_dias_proyectados, total_dias_ejecutados, int(dias_ausencia_mes)]
@@ -1124,7 +1138,7 @@ def main_app():
                                 f"Capacidad Neta Mes ({dias_habiles_mes} hábiles)": "#95A5A6", 
                                 "Días Planificados (Vendidos)": "#3498DB", 
                                 "Días Consumidos (Reales)": "#F39C12",
-                                "Días Ausencia RRHH (Desc.)": "#E74C3C"
+                                "Días Ausencia RRHH (Desc.)": "#E74C3C" # Nuevo pilar rojo para dimensionar el costo operativo del tiempo inactivo
                             },
                             title=f"Balance de Tiempos Operativos y Capacidad de {mes_sel} {anio_sel}"
                         )
@@ -1133,10 +1147,10 @@ def main_app():
                         st.plotly_chart(fig_tiempos, use_container_width=True)
                     
                     with c_graf2:
-                        df_kpi_mes_sorted = df_kpi_mes.sort_values('Avance_%', ascending=True)
+                        df_kpi_moneda_sorted = df_kpi_moneda.sort_values('Avance_%', ascending=True)
                         
                         fig_ranking = px.bar(
-                            df_kpi_mes_sorted, 
+                            df_kpi_moneda_sorted, 
                             y="Proyecto_Label", 
                             x="Avance_%", 
                             color="Avance_%",
@@ -1167,7 +1181,7 @@ def main_app():
                     d_p = row_nv['dias_proyectados']
                     d_e = row_nv['dias_ejecutados']
                     hh_e = row_nv['hh_asignadas']
-                    hh_p = d_p * 9.0
+                    hh_p = d_p * 9.0  # Planificado en HH
                     estado_nv = row_nv['estado']
                     
                     fmt_v = f"{mon} ${m_v:,.0f}" if mon == 'CLP' else f"{mon} ${m_v:,.3f}"
@@ -1197,6 +1211,7 @@ def main_app():
 
                     st.markdown("---")
                     
+                    # ALERTA DE ATRASOS ACUMULADOS EN EL PROYECTO
                     has_extras = 'dias_extras' in df_hh_raw.columns
                     if has_extras and not df_hh_raw.empty:
                         df_tot_extras = df_hh_raw[df_hh_raw['id_nv'] == row_nv['id_nv']]
@@ -1222,11 +1237,13 @@ def main_app():
                     cg1, cg2 = st.columns([1, 1.5])
                     
                     with cg1:
+                        # NUEVO GRÁFICO: Barras comparativas de Horas (HH)
                         df_hh_comp = pd.DataFrame({
                             "Concepto": ["Horas Vendidas (Plan)", "Horas Reales (Ejecutadas)"],
                             "Horas": [hh_p, hh_e]
                         })
                         
+                        # Determinar color de la barra real (rojo si se pasa del plan, verde si está bien)
                         color_real = "#E74C3C" if hh_e > hh_p else "#2ECC71"
                         
                         fig_bar_hh = px.bar(
@@ -1246,11 +1263,13 @@ def main_app():
                             height=350,
                             margin=dict(l=20, r=20, t=50, b=20)
                         )
+                        # Forzar el límite superior del gráfico para que los números no se corten
                         max_h = max(hh_p, hh_e)
                         fig_bar_hh.update_yaxes(range=[0, max_h * 1.2])
                         
                         st.plotly_chart(fig_bar_hh, use_container_width=True)
 
+                        # NUEVA SECCIÓN: Comentarios de la Sala / Actividad
                         st.markdown("**📝 Comentarios y Detalles de Ejecución**")
                         if asig_all_raw:
                             df_comentarios = pd.DataFrame(asig_all_raw)
@@ -1259,6 +1278,7 @@ def main_app():
                                 df_comentarios['actividad_ssee'] = df_comentarios['actividad_ssee'].fillna("Labor en Terreno")
                                 has_extra_cols = 'dias_extras' in df_comentarios.columns
                                 
+                                # Agrupamos cuidando si las nuevas columnas existen o no en la BD
                                 if has_extra_cols:
                                     df_comentarios['dias_extras'] = pd.to_numeric(df_comentarios['dias_extras'], errors='coerce').fillna(0)
                                     df_comentarios['justificacion'] = df_comentarios['justificacion'].fillna("")
@@ -1271,12 +1291,14 @@ def main_app():
                                     com_text = row_c['comentarios'] if pd.notna(row_c['comentarios']) and str(row_c['comentarios']).strip() else "Sin comentarios registrados."
                                     prog_val = int(row_c['progreso'])
                                     
+                                    # Filtrar etiquetas internas del sistema para que la lectura sea limpia
                                     if com_text in ["LIBRES", "EXTRAS", "SIN_PROGRAMAR"]:
                                         if com_text == "SIN_PROGRAMAR":
                                             com_text = "Estado operativo: SIN INICIAR"
                                         else:
                                             com_text = f"Estado operativo: {com_text.replace('_', ' ')}"
                                             
+                                    # Agregar visualización de días extras justificados
                                     if has_extra_cols and row_c['dias_extras'] > 0:
                                         com_text += f" | ⚠️ **+{int(row_c['dias_extras'])} días extra** (Motivo: {row_c['justificacion']})"
                                         
