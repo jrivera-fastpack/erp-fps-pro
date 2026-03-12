@@ -75,7 +75,7 @@ def init_connection():
 try:
     supabase: Client = init_connection()
 except Exception:
-    st.error("Error crítico: No se pudo conectar a la base de datos Supabase.")
+    st.error("Error crítico: No se pudo conectar a la base de datos Supabase. Verifique secrets.toml o la configuración en Streamlit Cloud.")
     st.stop()
 
 # --- INICIALIZACIÓN DE PROYECTO INTERNO DE RRHH ---
@@ -129,9 +129,11 @@ def calcular_fecha_fin_dinamica(f_ini, dias_totales, incluye_finde):
         es_finde = fecha_actual.weekday() >= 5
         
         if not incluye_finde:
+            # Si el equipo descansa findes/feriados, solo contamos si es un día hábil real
             if not es_finde and not es_feriado:
                 dias_contados += 1
         else:
+            # Si el equipo trabaja continuo (EXTRAS), cada día calendario cuenta como avance
             dias_contados += 1
             
         if dias_contados < dias_totales:
@@ -154,9 +156,11 @@ def calcular_hh_ssee(f_ini, f_fin, incluye_finde=False):
         es_feriado = str_fecha in FERIADOS_CHILE_2026
         es_finde = dia_semana >= 5
         
+        # Si no están programados para trabajar findes/feriados, ese día suma 0 horas
         if not incluye_finde and (es_finde or es_feriado):
             continue 
             
+        # Días contabilizables: Lunes a Jueves (9.5), Viernes (8.5), Extras en Sáb/Dom/Feriado (9.5)
         if dia_semana < 4: 
             hh += 9.5
         elif dia_semana == 4: 
@@ -201,6 +205,7 @@ def login_screen():
             if submit:
                 if email and password:
                     try:
+                        # Autenticación contra el backend de Supabase
                         response = supabase.auth.sign_in_with_password({"email": email, "password": password})
                         if response.session:
                             st.session_state.authenticated = True
@@ -212,9 +217,10 @@ def login_screen():
                     st.warning("Debe completar todos los campos.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-# --- APLICACIÓN PRINCIPAL ---
+# --- APLICACIÓN PRINCIPAL (SOLO ACCESIBLE SI ESTÁ AUTENTICADO) ---
 def main_app():
     # --- BARRA LATERAL ---
+    # Logotipo generado con HTML/CSS usando los colores corporativos de FASTPACK
     st.sidebar.markdown("""
         <div style='text-align: center; padding: 15px 0; background-color: white; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 6px solid #E6007E;'>
             <h2 style='margin: 0; font-size: 1.4em; font-family: "Arial Black", sans-serif; font-weight: 900; letter-spacing: 1px; line-height: 1.1;'>
@@ -534,11 +540,12 @@ def main_app():
                         
         st.divider()
         
-        col_days, _ = st.columns([1, 2])
-        dias_a_mostrar = col_days.slider("Días a visualizar", 1, 30, 7)
-        hoy = datetime.today().date()
+        # --- LÓGICA: SELECCIÓN DE FECHA DE INICIO PARA VER HISTORIAL ---
+        col_start, col_days = st.columns(2)
+        fecha_base_matriz = col_start.date_input("📅 Fecha de inicio de la matriz (Puedes elegir fechas pasadas)", value=datetime.today().date(), key="inicio_matriz")
+        dias_a_mostrar = col_days.slider("Días a visualizar hacia adelante", 1, 60, 14) 
         
-        fechas_rango = [hoy + timedelta(days=i) for i in range(dias_a_mostrar)]
+        fechas_rango = [fecha_base_matriz + timedelta(days=i) for i in range(dias_a_mostrar)]
         nombres_columnas_internos = [d.strftime("%d-%m-%Y") for d in fechas_rango]
         nombres_columnas_display = [f"{DIAS_ES[d.weekday()]} {d.strftime('%d/%m')}" for d in fechas_rango]
         
@@ -558,6 +565,7 @@ def main_app():
                 f_i = pd.to_datetime(a['fecha_inicio']).date()
                 f_f = pd.to_datetime(a['fecha_fin']).date()
                 
+                # 1. Pintar Ausencias Primero
                 if a['id_nv'] == 'AUSENCIA':
                     for i in range((f_f - f_i).days + 1):
                         d = f_i + timedelta(days=i)
@@ -566,6 +574,7 @@ def main_app():
                             etiqueta = f"🌴 {a['actividad_ssee']}"
                             matriz_final.at[a['especialista'], col] = etiqueta
                 
+                # 2. Pintar Proyecciones Globales (No sobreescribir ausencias)
                 elif a.get('actividad_ssee') == 'PROYECCION_GLOBAL':
                     trabajo_continuo = (a.get('comentarios') == 'EXTRAS')
                     cliente_nombre = mapa_clientes.get(a['id_nv'], 'Proyectado')
@@ -578,6 +587,7 @@ def main_app():
                             col = d.strftime("%d-%m-%Y")
                             valor_actual = str(matriz_final.at[a['especialista'], col])
                             
+                            # Solo escribimos si el técnico NO está de vacaciones/ausente ese día
                             if '🌴' not in valor_actual:
                                 etiqueta = f"{a['id_nv']} [{cliente_nombre}]"
                                 if valor_actual in ["🟢 Disponible", "⌛ No Hábil"]: 
@@ -587,6 +597,7 @@ def main_app():
         
         matriz_final.columns = nombres_columnas_display
         
+        # Función de estilos para pintar la matriz
         def style_matrix(x):
             texto = str(x)
             if 'No Hábil' in texto: return 'background-color: #F0F0F0; color: #A0A0A0'
@@ -1032,8 +1043,6 @@ def main_app():
             df_kpi = df_nv.merge(df_gas_agg, on='id_nv', how='left').merge(df_hh_agg, on='id_nv', how='left').fillna(0)
             df_kpi.rename(columns={'hh_vendidas': 'dias_proyectados'}, inplace=True)
             df_kpi['id_nv_str'] = df_kpi['id_nv'].astype(str)
-            
-            # Restauración de variables para evitar KeyError:
             df_kpi['Proyecto_Label'] = df_kpi['id_nv_str'] + " (" + df_kpi['cliente'] + ")"
             
             if 'created_at' in df_kpi.columns:
@@ -1047,40 +1056,31 @@ def main_app():
             max_date_val = df_kpi['fecha_creacion'].max()
             if pd.isnull(max_date_val): max_date_val = datetime.today().date()
             
-            # Conversión Financiera
             df_kpi['monto_gasto_ajustado'] = df_kpi.apply(lambda row: row['monto_gasto'] / tasa_cambio if row['moneda'] == 'USD' else row['monto_gasto'], axis=1)
             df_kpi['Margen'] = df_kpi['monto_vendido'] - df_kpi['monto_gasto_ajustado']
 
-            # --- SUB PESTAÑAS DE ANÁLISIS ---
             tab_global, tab_individual = st.tabs(["🌍 Dashboard Global Mensual", "🔍 Análisis Detallado por Proyecto"])
 
             with tab_global:
-                st.subheader("Visión Financiera Corporativa Mensual")
+                st.subheader("Visión Financiera Corporativa Mensual (Consolidada)")
                 
-                # --- FILTROS GLOBALES (AHORA POR MES/AÑO) ---
-                c_filt1, c_filt2, c_filt3 = st.columns(3)
-                moneda_global = c_filt1.radio("Seleccione Moneda:", ["CLP", "USD"], horizontal=True)
+                c_filt1, c_filt2 = st.columns(2)
                 
-                # Selectores de Mes y Año para control estadístico real
                 año_actual = datetime.today().year
                 mes_actual = datetime.today().month
                 lista_anios = list(range(año_actual - 2, año_actual + 2))
                 
-                mes_sel = c_filt2.selectbox("Seleccione el Mes:", list(MESES_ES.values()), index=mes_actual-1)
-                anio_sel = c_filt3.selectbox("Seleccione el Año:", lista_anios, index=lista_anios.index(año_actual))
+                mes_sel = c_filt1.selectbox("Seleccione el Mes:", list(MESES_ES.values()), index=mes_actual-1)
+                anio_sel = c_filt2.selectbox("Seleccione el Año:", lista_anios, index=lista_anios.index(año_actual))
                 
-                # Obtener el número del mes seleccionado
                 mes_num = list(MESES_ES.keys())[list(MESES_ES.values()).index(mes_sel)]
                 
-                # Determinar primer y último día del mes seleccionado
                 _, ultimo_dia = calendar.monthrange(anio_sel, mes_num)
                 fecha_inicio_mes = datetime(anio_sel, mes_num, 1).date()
                 fecha_fin_mes = datetime(anio_sel, mes_num, ultimo_dia).date()
                 
-                # Aplicar filtros (Filtrar proyectos creados en el mes seleccionado)
-                df_kpi_moneda = df_kpi[(df_kpi['moneda'] == moneda_global) & (df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)]
+                df_kpi_mes = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)].copy()
                 
-                # Cálculo de Capacidad Total de Equipo en el Mes (Descontando Fines de semana y feriados)
                 dias_habiles_mes = 0
                 curr_d = fecha_inicio_mes
                 while curr_d <= fecha_fin_mes:
@@ -1090,7 +1090,6 @@ def main_app():
                 
                 capacidad_total_teorica = dias_habiles_mes * len(ESPECIALISTAS)
                 
-                # LÓGICA DE RRHH: Calculamos los días de ausencia específicos que caen dentro de este mes
                 dias_ausencia_mes = 0
                 if not df_ausencias.empty:
                     for _, row_aus in df_ausencias.iterrows():
@@ -1100,34 +1099,34 @@ def main_app():
                         c_date = max(d_ini, fecha_inicio_mes)
                         e_date = min(d_fin, fecha_fin_mes)
                         while c_date <= e_date:
-                            # Solo descontamos capacidad si la ausencia ocurrió en un día que originalmente era hábil
                             if c_date.weekday() < 5 and c_date.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026:
                                 dias_ausencia_mes += 1
                             c_date += timedelta(days=1)
                 
                 capacidad_neta_mes = int(capacidad_total_teorica - dias_ausencia_mes)
                 
-                if df_kpi_moneda.empty:
-                    st.info(f"No hay proyectos registrados operando en {moneda_global} durante {mes_sel} de {anio_sel}.")
+                if df_kpi_mes.empty:
+                    st.info(f"No hay proyectos registrados operando durante {mes_sel} de {anio_sel}.")
                 else:
-                    total_venta = df_kpi_moneda['monto_vendido'].sum()
+                    df_kpi_mes['venta_usd'] = df_kpi_mes.apply(lambda row: row['monto_vendido'] if row['moneda'] == 'USD' else row['monto_vendido'] / tasa_cambio, axis=1)
+                    total_venta_usd = df_kpi_mes['venta_usd'].sum()
                     
-                    # MODIFICACIÓN: Siempre sumamos la columna 'monto_gasto' original que está en CLP
-                    total_gasto_clp = df_kpi_moneda['monto_gasto'].sum()
+                    total_gasto_clp = df_kpi_mes['monto_gasto'].sum()
+                    total_gasto_usd = total_gasto_clp / tasa_cambio
                     
-                    fmt_tot = f"{moneda_global} ${total_venta:,.0f}" if moneda_global == 'CLP' else f"{moneda_global} ${total_venta:,.3f}"
-                    fmt_gas_clp = f"CLP ${total_gasto_clp:,.0f}"
+                    fmt_tot = f"USD ${total_venta_usd:,.2f}"
+                    fmt_gas_usd = f"USD ${total_gasto_usd:,.2f}"
                     
                     col1, col2 = st.columns(2)
-                    col1.metric(f"Cartera Ofertada en {mes_sel}", fmt_tot)
-                    col2.metric("Ejecución de Gasto Acumulado (CLP)", fmt_gas_clp)
+                    col1.metric(f"Cartera Ofertada Consolidada en {mes_sel}", fmt_tot)
+                    col2.metric("Ejecución de Gasto Acumulado (USD)", fmt_gas_usd, help=f"Tus rendiciones originales suman CLP ${total_gasto_clp:,.0f} convertidas a la tasa actual.")
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     c_graf1, c_graf2 = st.columns(2)
                     
                     with c_graf1:
-                        total_dias_proyectados = int(round(df_kpi_moneda['dias_proyectados'].sum()))
-                        total_dias_ejecutados = int(round(df_kpi_moneda['dias_ejecutados'].sum()))
+                        total_dias_proyectados = int(round(df_kpi_mes['dias_proyectados'].sum()))
+                        total_dias_ejecutados = int(round(df_kpi_mes['dias_ejecutados'].sum()))
                         df_tiempos = pd.DataFrame({
                             "Concepto": [f"Capacidad Neta Mes ({dias_habiles_mes} hábiles)", "Días Planificados (Vendidos)", "Días Consumidos (Reales)", "Días Ausencia RRHH (Desc.)"],
                             "Cantidad": [capacidad_neta_mes, total_dias_proyectados, total_dias_ejecutados, int(dias_ausencia_mes)]
@@ -1138,7 +1137,7 @@ def main_app():
                                 f"Capacidad Neta Mes ({dias_habiles_mes} hábiles)": "#95A5A6", 
                                 "Días Planificados (Vendidos)": "#3498DB", 
                                 "Días Consumidos (Reales)": "#F39C12",
-                                "Días Ausencia RRHH (Desc.)": "#E74C3C" # Nuevo pilar rojo para dimensionar el costo operativo del tiempo inactivo
+                                "Días Ausencia RRHH (Desc.)": "#E74C3C" 
                             },
                             title=f"Balance de Tiempos Operativos y Capacidad de {mes_sel} {anio_sel}"
                         )
@@ -1147,10 +1146,10 @@ def main_app():
                         st.plotly_chart(fig_tiempos, use_container_width=True)
                     
                     with c_graf2:
-                        df_kpi_moneda_sorted = df_kpi_moneda.sort_values('Avance_%', ascending=True)
+                        df_kpi_mes_sorted = df_kpi_mes.sort_values('Avance_%', ascending=True)
                         
                         fig_ranking = px.bar(
-                            df_kpi_moneda_sorted, 
+                            df_kpi_mes_sorted, 
                             y="Proyecto_Label", 
                             x="Avance_%", 
                             color="Avance_%",
@@ -1181,7 +1180,7 @@ def main_app():
                     d_p = row_nv['dias_proyectados']
                     d_e = row_nv['dias_ejecutados']
                     hh_e = row_nv['hh_asignadas']
-                    hh_p = d_p * 9.0  # Planificado en HH
+                    hh_p = d_p * 9.0  
                     estado_nv = row_nv['estado']
                     
                     fmt_v = f"{mon} ${m_v:,.0f}" if mon == 'CLP' else f"{mon} ${m_v:,.3f}"
@@ -1211,7 +1210,6 @@ def main_app():
 
                     st.markdown("---")
                     
-                    # ALERTA DE ATRASOS ACUMULADOS EN EL PROYECTO
                     has_extras = 'dias_extras' in df_hh_raw.columns
                     if has_extras and not df_hh_raw.empty:
                         df_tot_extras = df_hh_raw[df_hh_raw['id_nv'] == row_nv['id_nv']]
@@ -1237,13 +1235,11 @@ def main_app():
                     cg1, cg2 = st.columns([1, 1.5])
                     
                     with cg1:
-                        # NUEVO GRÁFICO: Barras comparativas de Horas (HH)
                         df_hh_comp = pd.DataFrame({
                             "Concepto": ["Horas Vendidas (Plan)", "Horas Reales (Ejecutadas)"],
                             "Horas": [hh_p, hh_e]
                         })
                         
-                        # Determinar color de la barra real (rojo si se pasa del plan, verde si está bien)
                         color_real = "#E74C3C" if hh_e > hh_p else "#2ECC71"
                         
                         fig_bar_hh = px.bar(
@@ -1263,13 +1259,11 @@ def main_app():
                             height=350,
                             margin=dict(l=20, r=20, t=50, b=20)
                         )
-                        # Forzar el límite superior del gráfico para que los números no se corten
                         max_h = max(hh_p, hh_e)
                         fig_bar_hh.update_yaxes(range=[0, max_h * 1.2])
                         
                         st.plotly_chart(fig_bar_hh, use_container_width=True)
 
-                        # NUEVA SECCIÓN: Comentarios de la Sala / Actividad
                         st.markdown("**📝 Comentarios y Detalles de Ejecución**")
                         if asig_all_raw:
                             df_comentarios = pd.DataFrame(asig_all_raw)
@@ -1278,7 +1272,6 @@ def main_app():
                                 df_comentarios['actividad_ssee'] = df_comentarios['actividad_ssee'].fillna("Labor en Terreno")
                                 has_extra_cols = 'dias_extras' in df_comentarios.columns
                                 
-                                # Agrupamos cuidando si las nuevas columnas existen o no en la BD
                                 if has_extra_cols:
                                     df_comentarios['dias_extras'] = pd.to_numeric(df_comentarios['dias_extras'], errors='coerce').fillna(0)
                                     df_comentarios['justificacion'] = df_comentarios['justificacion'].fillna("")
@@ -1291,14 +1284,12 @@ def main_app():
                                     com_text = row_c['comentarios'] if pd.notna(row_c['comentarios']) and str(row_c['comentarios']).strip() else "Sin comentarios registrados."
                                     prog_val = int(row_c['progreso'])
                                     
-                                    # Filtrar etiquetas internas del sistema para que la lectura sea limpia
                                     if com_text in ["LIBRES", "EXTRAS", "SIN_PROGRAMAR"]:
                                         if com_text == "SIN_PROGRAMAR":
                                             com_text = "Estado operativo: SIN INICIAR"
                                         else:
                                             com_text = f"Estado operativo: {com_text.replace('_', ' ')}"
                                             
-                                    # Agregar visualización de días extras justificados
                                     if has_extra_cols and row_c['dias_extras'] > 0:
                                         com_text += f" | ⚠️ **+{int(row_c['dias_extras'])} días extra** (Motivo: {row_c['justificacion']})"
                                         
