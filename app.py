@@ -1032,45 +1032,39 @@ def main_app():
             df_kpi = df_nv.merge(df_gas_agg, on='id_nv', how='left').merge(df_hh_agg, on='id_nv', how='left').fillna(0)
             df_kpi.rename(columns={'hh_vendidas': 'dias_proyectados'}, inplace=True)
             df_kpi['id_nv_str'] = df_kpi['id_nv'].astype(str)
-            df_kpi['Proyecto_Label'] = df_kpi['id_nv_str'] + " (" + df_kpi['cliente'] + ")"
-            
-            if 'created_at' in df_kpi.columns:
-                df_kpi['fecha_creacion'] = pd.to_datetime(df_kpi['created_at'], errors='coerce').dt.date
-                df_kpi['fecha_creacion'] = df_kpi['fecha_creacion'].fillna(datetime.today().date())
-            else:
-                df_kpi['fecha_creacion'] = datetime.today().date()
-                
-            min_date_val = df_kpi['fecha_creacion'].min()
-            if pd.isnull(min_date_val): min_date_val = datetime.today().date() - timedelta(days=30)
-            max_date_val = df_kpi['fecha_creacion'].max()
-            if pd.isnull(max_date_val): max_date_val = datetime.today().date()
-            
+            # Conversión Financiera
             df_kpi['monto_gasto_ajustado'] = df_kpi.apply(lambda row: row['monto_gasto'] / tasa_cambio if row['moneda'] == 'USD' else row['monto_gasto'], axis=1)
             df_kpi['Margen'] = df_kpi['monto_vendido'] - df_kpi['monto_gasto_ajustado']
 
+            # --- SUB PESTAÑAS DE ANÁLISIS ---
             tab_global, tab_individual = st.tabs(["🌍 Dashboard Global Mensual", "🔍 Análisis Detallado por Proyecto"])
 
             with tab_global:
                 st.subheader("Visión Financiera Corporativa Mensual")
                 
-                c_filt1, c_filt2, c_filt3 = st.columns(3)
-                moneda_global = c_filt1.radio("Seleccione Moneda:", ["CLP", "USD"], horizontal=True)
+                # --- FILTROS GLOBALES (AHORA POR MES/AÑO) ---
+                c_filt1, c_filt2 = st.columns(2)
                 
+                # Selectores de Mes y Año para control estadístico real
                 año_actual = datetime.today().year
                 mes_actual = datetime.today().month
                 lista_anios = list(range(año_actual - 2, año_actual + 2))
                 
-                mes_sel = c_filt2.selectbox("Seleccione el Mes:", list(MESES_ES.values()), index=mes_actual-1)
-                anio_sel = c_filt3.selectbox("Seleccione el Año:", lista_anios, index=lista_anios.index(año_actual))
+                mes_sel = c_filt1.selectbox("Seleccione el Mes:", list(MESES_ES.values()), index=mes_actual-1)
+                anio_sel = c_filt2.selectbox("Seleccione el Año:", lista_anios, index=lista_anios.index(año_actual))
                 
+                # Obtener el número del mes seleccionado
                 mes_num = list(MESES_ES.keys())[list(MESES_ES.values()).index(mes_sel)]
                 
+                # Determinar primer y último día del mes seleccionado
                 _, ultimo_dia = calendar.monthrange(anio_sel, mes_num)
                 fecha_inicio_mes = datetime(anio_sel, mes_num, 1).date()
                 fecha_fin_mes = datetime(anio_sel, mes_num, ultimo_dia).date()
                 
-                df_kpi_moneda = df_kpi[(df_kpi['moneda'] == moneda_global) & (df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)]
+                # Aplicar filtros (Filtra TODOS los proyectos creados en el mes seleccionado, consolidando monedas)
+                df_kpi_mes = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)].copy()
                 
+                # Cálculo de Capacidad Total de Equipo en el Mes (Descontando Fines de semana y feriados)
                 dias_habiles_mes = 0
                 curr_d = fecha_inicio_mes
                 while curr_d <= fecha_fin_mes:
@@ -1080,6 +1074,7 @@ def main_app():
                 
                 capacidad_total_teorica = dias_habiles_mes * len(ESPECIALISTAS)
                 
+                # LÓGICA DE RRHH: Calculamos los días de ausencia específicos que caen dentro de este mes
                 dias_ausencia_mes = 0
                 if not df_ausencias.empty:
                     for _, row_aus in df_ausencias.iterrows():
@@ -1089,34 +1084,39 @@ def main_app():
                         c_date = max(d_ini, fecha_inicio_mes)
                         e_date = min(d_fin, fecha_fin_mes)
                         while c_date <= e_date:
+                            # Solo descontamos capacidad si la ausencia ocurrió en un día que originalmente era hábil
                             if c_date.weekday() < 5 and c_date.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026:
                                 dias_ausencia_mes += 1
                             c_date += timedelta(days=1)
                 
-                capacidad_neta_mes = capacidad_total_teorica - dias_ausencia_mes
+                capacidad_neta_mes = int(capacidad_total_teorica - dias_ausencia_mes)
                 
-                if df_kpi_moneda.empty:
-                    st.info(f"No hay proyectos registrados operando en {moneda_global} durante {mes_sel} de {anio_sel}.")
+                if df_kpi_mes.empty:
+                    st.info(f"No hay proyectos registrados operando durante {mes_sel} de {anio_sel}.")
                 else:
-                    total_venta = df_kpi_moneda['monto_vendido'].sum()
-                    total_gasto_clp = df_kpi_moneda['monto_gasto'].sum()
+                    # CONSOLIDACIÓN A DÓLARES (USD)
+                    df_kpi_mes['venta_usd_consolidada'] = df_kpi_mes.apply(lambda row: row['monto_vendido'] if row['moneda'] == 'USD' else row['monto_vendido'] / tasa_cambio, axis=1)
+                    total_venta_usd = df_kpi_mes['venta_usd_consolidada'].sum()
                     
-                    fmt_tot = f"{moneda_global} ${total_venta:,.0f}" if moneda_global == 'CLP' else f"{moneda_global} ${total_venta:,.3f}"
+                    # GASTOS SIEMPRE EN CLP
+                    total_gasto_clp = df_kpi_mes['monto_gasto'].sum()
+                    
+                    fmt_tot = f"USD ${total_venta_usd:,.2f}"
                     fmt_gas_clp = f"CLP ${total_gasto_clp:,.0f}"
                     
                     col1, col2 = st.columns(2)
-                    col1.metric(f"Cartera Ofertada en {mes_sel}", fmt_tot)
+                    col1.metric(f"Cartera Ofertada Consolidada en {mes_sel}", fmt_tot)
                     col2.metric("Ejecución de Gasto Acumulado (CLP)", fmt_gas_clp)
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     c_graf1, c_graf2 = st.columns(2)
                     
                     with c_graf1:
-                        total_dias_proyectados = df_kpi_moneda['dias_proyectados'].sum()
-                        total_dias_ejecutados = df_kpi_moneda['dias_ejecutados'].sum()
+                        total_dias_proyectados = int(round(df_kpi_mes['dias_proyectados'].sum()))
+                        total_dias_ejecutados = int(round(df_kpi_mes['dias_ejecutados'].sum()))
                         df_tiempos = pd.DataFrame({
                             "Concepto": [f"Capacidad Neta Mes ({dias_habiles_mes} hábiles)", "Días Planificados (Vendidos)", "Días Consumidos (Reales)", "Días Ausencia RRHH (Desc.)"],
-                            "Cantidad": [capacidad_neta_mes, total_dias_proyectados, total_dias_ejecutados, dias_ausencia_mes]
+                            "Cantidad": [capacidad_neta_mes, total_dias_proyectados, total_dias_ejecutados, int(dias_ausencia_mes)]
                         })
                         fig_tiempos = px.bar(
                             df_tiempos, x="Concepto", y="Cantidad", color="Concepto", text="Cantidad",
@@ -1128,15 +1128,15 @@ def main_app():
                             },
                             title=f"Balance de Tiempos Operativos y Capacidad de {mes_sel} {anio_sel}"
                         )
-                        fig_tiempos.update_traces(texttemplate='%{text:,.1f}', textposition='outside')
+                        fig_tiempos.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
                         fig_tiempos.update_layout(yaxis_title="Cantidad de Días", showlegend=False, plot_bgcolor='white')
                         st.plotly_chart(fig_tiempos, use_container_width=True)
                     
                     with c_graf2:
-                        df_kpi_moneda_sorted = df_kpi_moneda.sort_values('Avance_%', ascending=True)
+                        df_kpi_mes_sorted = df_kpi_mes.sort_values('Avance_%', ascending=True)
                         
                         fig_ranking = px.bar(
-                            df_kpi_moneda_sorted, 
+                            df_kpi_mes_sorted, 
                             y="Proyecto_Label", 
                             x="Avance_%", 
                             color="Avance_%",
