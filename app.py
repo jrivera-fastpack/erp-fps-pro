@@ -1045,7 +1045,7 @@ def main_app():
                 st.info("Aún no hay actividades agregadas al alcance para la vista seleccionada.")
 
     # ==========================================
-    # MÓDULO 4: GASTOS Y KPIs (FACTURACIÓN POR HITOS)
+    # MÓDULO 4: GASTOS Y KPIs (FACTURACIÓN POR HITOS Y BACKLOG)
     # ==========================================
     with tab4:
         st.header("Análisis de Datos y Control Financiero")
@@ -1126,6 +1126,30 @@ def main_app():
             df_kpi.rename(columns={'hh_vendidas': 'dias_proyectados'}, inplace=True)
             df_kpi['id_nv_str'] = df_kpi['id_nv'].astype(str)
             df_kpi['Proyecto_Label'] = df_kpi['id_nv_str'] + " (" + df_kpi['cliente'] + ")"
+            
+            # --- MANEJO SEGURO COLUMNA ESTADO FACTURACIÓN ---
+            if 'estado_facturacion' not in df_kpi.columns:
+                df_kpi['estado_facturacion'] = 'Pendiente'
+            else:
+                df_kpi['estado_facturacion'] = df_kpi['estado_facturacion'].fillna('Pendiente')
+                
+            # --- CÁLCULO DE MONTO PENDIENTE Y BACKLOG REAL ---
+            if not df_hitos.empty:
+                hitos_facturados = df_hitos[df_hitos['estado'] == 'Facturada'].groupby('id_nv')['monto'].sum().reset_index()
+                hitos_facturados.rename(columns={'monto': 'monto_facturado_hitos'}, inplace=True)
+                df_kpi = df_kpi.merge(hitos_facturados, on='id_nv', how='left')
+                df_kpi['monto_facturado_hitos'] = df_kpi['monto_facturado_hitos'].fillna(0)
+            else:
+                df_kpi['monto_facturado_hitos'] = 0.0
+
+            def calc_monto_pendiente(row):
+                if row['estado_facturacion'] == 'Facturada':
+                    return 0.0
+                if row['monto_facturado_hitos'] > 0:
+                    return max(0.0, float(row['monto_vendido']) - float(row['monto_facturado_hitos']))
+                return float(row['monto_vendido'])
+
+            df_kpi['monto_pendiente'] = df_kpi.apply(calc_monto_pendiente, axis=1)
             
             if 'created_at' in df_kpi.columns:
                 df_kpi['fecha_creacion'] = pd.to_datetime(df_kpi['created_at'], errors='coerce').dt.date
@@ -1387,27 +1411,97 @@ def main_app():
                 mes_num_t = list(MESES_ES.keys())[list(MESES_ES.values()).index(mes_sel_t)]
                 
                 st.markdown(f"### 💸 1. Pronóstico de Facturación para {mes_sel_t} {anio_sel_t}")
-                st.info("Visualiza las parcialidades (hitos) que han sido programadas para facturarse en este mes específico.")
+                st.info("Visualiza las parcialidades (hitos) programadas, y las ejecuciones automáticas de este mes.")
                 
+                df_hitos_mes = pd.DataFrame()
                 if not df_hitos.empty:
                     df_hitos_mes = df_hitos[(df_hitos['mes'] == mes_num_t) & (df_hitos['anio'] == anio_sel_t)].copy()
                     if not df_hitos_mes.empty:
-                        # Extraer info del proyecto para la tabla
-                        df_hitos_mes = df_hitos_mes.merge(df_kpi[['id_nv', 'cliente', 'moneda']], on='id_nv', how='left')
-                        
-                        # Sumar total pronosticado en USD
+                        df_hitos_mes = df_hitos_mes.merge(df_kpi[['id_nv', 'cliente', 'moneda', 'monto_vendido', 'monto_pendiente']], on='id_nv', how='left')
                         df_hitos_mes['monto_usd'] = df_hitos_mes.apply(lambda r: r['monto'] if r['moneda'] == 'USD' else r['monto'] / tasa_cambio, axis=1)
-                        tot_fact_est = df_hitos_mes['monto_usd'].sum()
-                        st.metric("Total Pronosticado a Facturar (USD Equivalente)", f"USD ${tot_fact_est:,.2f}")
+                
+                if df_hitos_mes.empty:
+                    df_hitos_mes = pd.DataFrame(columns=['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado', 'monto_usd'])
+
+                # --- PRONÓSTICO AUTOMÁTICO DE EJECUCIÓN ---
+                df_all_valid_asig = pd.DataFrame()
+                if asig_all_raw:
+                    df_temp_asig = pd.DataFrame(asig_all_raw)
+                    # Incluimos PROYECCION_GLOBAL para detectar fechas recién creadas en Comercial
+                    df_all_valid_asig = df_temp_asig[(df_temp_asig['id_nv'] != 'AUSENCIA') & (df_temp_asig['comentarios'] != 'SIN_PROGRAMAR')]
+
+                if not df_all_valid_asig.empty:
+                    df_max_fin = df_all_valid_asig.groupby('id_nv')['fecha_fin'].max().reset_index()
+                    df_max_fin['fecha_fin'] = pd.to_datetime(df_max_fin['fecha_fin']).dt.date
+                    df_kpi_auto = df_kpi.merge(df_max_fin, on='id_nv', how='inner')
+                    
+                    # Proyectos que terminan su ejecución física en el mes seleccionado
+                    mask_auto = (pd.to_datetime(df_kpi_auto['fecha_fin']).dt.month == mes_num_t) & (pd.to_datetime(df_kpi_auto['fecha_fin']).dt.year == anio_sel_t)
+                    nvs_auto = df_kpi_auto[mask_auto]
+                    
+                    nuevas_filas = []
+                    for _, r_auto in nvs_auto.iterrows():
+                        # Si no se le ha planificado NINGÚN hito de facturación aún
+                        has_hitos_ever = not df_hitos[df_hitos['id_nv'] == r_auto['id_nv']].empty
+                        if not has_hitos_ever and r_auto['estado_facturacion'] != 'Facturada':
+                            monto_pend = r_auto['monto_pendiente']
+                            if monto_pend > 0:
+                                m_usd = monto_pend if r_auto['moneda'] == 'USD' else monto_pend / tasa_cambio
+                                nuevas_filas.append({
+                                    'id': 'Auto',
+                                    'id_nv': r_auto['id_nv'],
+                                    'cliente': r_auto['cliente'],
+                                    'moneda': r_auto['moneda'],
+                                    'porcentaje': 100.0,
+                                    'monto': monto_pend,
+                                    'estado': 'Pronóstico Automático (Ejec. este mes)',
+                                    'monto_usd': m_usd
+                                })
+                    if nuevas_filas:
+                        df_hitos_mes = pd.concat([df_hitos_mes, pd.DataFrame(nuevas_filas)], ignore_index=True)
+
+                if not df_hitos_mes.empty:
+                    tot_fact_est = df_hitos_mes['monto_usd'].sum()
+                    st.metric("Total Pronosticado a Facturar (USD Equivalente)", f"USD ${tot_fact_est:,.2f}")
+                    
+                    df_show_hitos = df_hitos_mes[['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
+                    df_show_hitos['porcentaje'] = df_show_hitos['porcentaje'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) and isinstance(x, (int, float)) else x)
+                    
+                    # AÑADIR FILA DE TOTALES
+                    total_row = pd.DataFrame([{
+                        'id': '', 'id_nv': 'TOTALES', 'cliente': '', 'moneda': 'USD (Equiv)', 
+                        'porcentaje': '', 'monto': tot_fact_est, 'estado': ''
+                    }])
+                    df_show_hitos = pd.concat([df_show_hitos, total_row], ignore_index=True)
+                    
+                    def format_monto(val, mon, id_val):
+                        if pd.isna(val) or val == '': return ''
+                        try:
+                            v = float(val)
+                        except Exception:
+                            return val
+                        if id_val == '' and mon == 'USD (Equiv)': return f"USD ${v:,.2f}"
+                        if mon == 'USD': return f"USD ${v:,.2f}"
+                        return f"CLP ${v:,.0f}"
                         
-                        df_show_hitos = df_hitos_mes[['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
-                        df_show_hitos['porcentaje'] = df_show_hitos['porcentaje'].apply(lambda x: f"{x:.1f}% del Total")
-                        df_show_hitos.rename(columns={'id_nv':'NV', 'cliente':'Cliente', 'moneda':'Moneda', 'porcentaje':'% Calculado', 'monto':'Monto Parcial', 'estado':'Estado Factura'}, inplace=True)
-                        st.dataframe(df_show_hitos, use_container_width=True, hide_index=True)
+                    df_show_hitos['Monto Parcial'] = df_show_hitos.apply(lambda x: format_monto(x['monto'], x['moneda'], x['id']), axis=1)
+                    df_show_hitos.drop(columns=['monto'], inplace=True)
+                    df_show_hitos.rename(columns={'id_nv':'NV', 'cliente':'Cliente', 'moneda':'Moneda', 'porcentaje':'% Calculado', 'estado':'Estado Factura'}, inplace=True)
+                    
+                    def style_total_row(row):
+                        if row['NV'] == 'TOTALES':
+                            return ['background-color: #003366; color: white; font-weight: bold'] * len(row)
+                        elif 'Auto' in str(row['Estado Factura']):
+                            return ['background-color: #E8F8F5; font-style: italic'] * len(row)
+                        return [''] * len(row)
                         
-                        with st.expander("🔄 Actualizar Estado de una Factura del mes"):
+                    st.dataframe(df_show_hitos.style.apply(style_total_row, axis=1), use_container_width=True, hide_index=True)
+                    
+                    with st.expander("🔄 Actualizar Estado de una Factura del mes"):
+                        hitos_reales = df_hitos_mes[df_hitos_mes['id'].astype(str).str.isnumeric()]
+                        if not hitos_reales.empty:
                             c_up1, c_up2 = st.columns(2)
-                            id_h_up = c_up1.selectbox("Seleccione el ID de la Parcialidad:", df_show_hitos['id'].tolist())
+                            id_h_up = c_up1.selectbox("Seleccione el ID de la Parcialidad:", hitos_reales['id'].tolist())
                             nuevo_est_h = c_up2.selectbox("Nuevo Estado:", ["Pendiente", "Facturada", "Postergada"])
                             if st.button("Actualizar Hito", use_container_width=True):
                                 try:
@@ -1416,10 +1510,10 @@ def main_app():
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error al actualizar: {e}")
-                    else:
-                        st.write("No hay parcialidades de facturación programadas para este mes.")
+                        else:
+                            st.info("Los pronósticos automáticos se volverán facturas reales cuando crees sus hitos manualmente abajo.")
                 else:
-                    st.write("No hay parcialidades de facturación creadas en la base de datos.")
+                    st.write("No hay parcialidades de facturación programadas para este mes ni ejecuciones automáticas detectadas.")
                 
                 st.divider()
                 st.markdown("### ⚙️ 2. Administrar Parcialidades por Proyecto")
@@ -1433,20 +1527,19 @@ def main_app():
                         
                         df_hitos_nv = df_hitos[df_hitos['id_nv'] == id_nv_h]
                         
-                        # --- NUEVA LÓGICA: CÁLCULO SOBRE SALDO RESTANTE ---
+                        # --- LÓGICA: CÁLCULO SOBRE SALDO RESTANTE ---
                         monto_planeado = float(df_hitos_nv['monto'].sum()) if not df_hitos_nv.empty else 0.0
                         monto_restante = monto_tot_h - monto_planeado
                         
                         pct_planeado_real = (monto_planeado / monto_tot_h * 100) if monto_tot_h > 0 else 0.0
                         pct_restante_real = 100.0 - pct_planeado_real
                         
-                        st.write(f"**Monto Total Proyecto:** {moneda_h} ${monto_tot_h:,.2f} | **Monto Restante:** {moneda_h} ${monto_restante:,.2f}")
+                        st.write(f"**Monto Total Proyecto:** {moneda_h} ${monto_tot_h:,.2f} | **Monto Restante por Asignar:** {moneda_h} ${monto_restante:,.2f}")
                         st.write(f"**Planificado:** {pct_planeado_real:.1f}% | **Por Planificar:** {pct_restante_real:.1f}%")
                         
                         if not df_hitos_nv.empty:
                             df_hnv_show = df_hitos_nv[['id', 'mes', 'anio', 'porcentaje', 'monto', 'estado']].copy()
                             df_hnv_show['mes'] = df_hnv_show['mes'].apply(lambda x: MESES_ES.get(x, x))
-                            # Redondear el porcentaje visualmente para que no confunda
                             df_hnv_show['porcentaje'] = df_hnv_show['porcentaje'].apply(lambda x: f"{x:.1f}% del Total")
                             st.dataframe(df_hnv_show, use_container_width=True, hide_index=True)
                             
@@ -1458,7 +1551,6 @@ def main_app():
                                 except Exception as e:
                                     st.error("Error al eliminar hitos.")
                             
-                        # Usamos 0.01 para evitar problemas con decimales microscópicos de Python
                         if round(monto_restante, 2) > 0:
                             st.markdown(f"**Añadir nueva parcialidad sobre el saldo restante ({moneda_h} ${monto_restante:,.2f}):**")
                             with st.form("form_add_hito"):
@@ -1473,7 +1565,7 @@ def main_app():
                                     # El monto se calcula basado en el % del monto RESTANTE
                                     monto_calc = (h_pct / 100.0) * monto_restante
                                     
-                                    # Guardamos el porcentaje real respecto al total en la BD para consistencia
+                                    # Guardamos el porcentaje real respecto al total en la BD para no perder la proporción histórica
                                     pct_sobre_total = (monto_calc / monto_tot_h) * 100 if monto_tot_h > 0 else 0
                                     
                                     try:
@@ -1492,47 +1584,31 @@ def main_app():
                         else:
                             st.success("✅ El 100% de este proyecto ya ha sido planificado en hitos.")
 
-                st.divider()
-                st.markdown("### 📋 3. Resumen Operativo (Proyectos creados en el mes)")
-                _, ultimo_dia_t = calendar.monthrange(anio_sel_t, mes_num_t)
-                fecha_inicio_t = datetime(anio_sel_t, mes_num_t, 1).date()
-                fecha_fin_t = datetime(anio_sel_t, mes_num_t, ultimo_dia_t).date()
-                df_kpi_tabla = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_t) & (df_kpi['fecha_creacion'] <= fecha_fin_t)].copy()
-                
-                if not df_kpi_tabla.empty:
-                    cols_to_show = ['id_nv', 'cliente', 'moneda', 'monto_vendido', 'monto_gasto', 'hh_asignadas', 'estado']
-                    df_display = df_kpi_tabla[cols_to_show].rename(columns={
-                        'id_nv': 'NV', 'cliente': 'Cliente', 'moneda': 'Moneda', 
-                        'monto_vendido': 'Monto Ofertado', 'monto_gasto': 'Gastos Rendición (CLP)', 
-                        'hh_asignadas': 'Total HH Utilizadas', 'estado': 'Estado Operativo'
-                    })
-                    st.dataframe(df_display, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No hay registros comerciales en este mes.")
-
             # --- NUEVA PESTAÑA: BACKLOG Y PENDIENTES ---
             with tab_pendientes:
-                st.subheader("Servicios Pendientes (Backlog de Ejecución)")
-                st.info("Aquí se listan todos los proyectos que están Abiertos y que aún tienen un **0% de avance físico**, lo que representa el trabajo atrasado o por venir.")
+                st.subheader("Servicios Pendientes (Backlog de Facturación y Ejecución)")
+                st.info("Aquí se listan todos los proyectos que tienen un saldo pendiente por facturar, descontando automáticamente las parcialidades ya facturadas.")
                 
-                df_pendientes = df_kpi[(df_kpi['Avance_%'] == 0) & (df_kpi['estado'] == 'Abierta')].copy()
+                # Excluimos lo que ya se facturó usando la nueva columna 'monto_pendiente'
+                df_pendientes = df_kpi[df_kpi['monto_pendiente'] > 0].copy()
                 
                 if not df_pendientes.empty:
-                    df_pendientes['monto_usd_est'] = df_pendientes.apply(lambda row: row['monto_vendido'] if row['moneda'] == 'USD' else row['monto_vendido'] / tasa_cambio, axis=1)
+                    df_pendientes['monto_usd_est'] = df_pendientes.apply(lambda row: row['monto_pendiente'] if row['moneda'] == 'USD' else row['monto_pendiente'] / tasa_cambio, axis=1)
                     total_pendiente_usd = df_pendientes['monto_usd_est'].sum()
                     
-                    st.metric("Total Cartera Pendiente por Ejecutar (Equivalente USD)", f"USD ${total_pendiente_usd:,.2f}")
+                    st.metric("Total Cartera Pendiente (Equivalente USD)", f"USD ${total_pendiente_usd:,.2f}")
                     st.markdown("<br>", unsafe_allow_html=True)
                     
-                    cols_pend = ['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'monto_vendido']
+                    cols_pend = ['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'monto_vendido', 'monto_pendiente', 'estado_facturacion']
                     df_pend_display = df_pendientes[cols_pend].rename(columns={
                         'id_nv': 'NV', 'cliente': 'Cliente', 'tipo_servicio': 'Tipo', 
-                        'moneda': 'Moneda', 'monto_vendido': 'Monto Ofertado'
+                        'moneda': 'Moneda', 'monto_vendido': 'Monto Ofertado Original',
+                        'monto_pendiente': 'Saldo Pendiente', 'estado_facturacion': 'Estado General'
                     })
                     
                     st.dataframe(df_pend_display, use_container_width=True, hide_index=True)
                 else:
-                    st.success("✨ ¡Excelente! No hay servicios estancados o con 0% de avance en tu Backlog.")
+                    st.success("✨ ¡Excelente! No hay servicios con saldo pendiente en tu Backlog.")
 
     # ==========================================
     # MÓDULO 5: CIERRE Y PDF ANALÍTICO
@@ -1638,4 +1714,3 @@ if not st.session_state.authenticated:
     login_screen()
 else:
     main_app()
-
