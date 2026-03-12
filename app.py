@@ -1401,7 +1401,8 @@ def main_app():
                         st.metric("Total Pronosticado a Facturar (USD Equivalente)", f"USD ${tot_fact_est:,.2f}")
                         
                         df_show_hitos = df_hitos_mes[['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
-                        df_show_hitos.rename(columns={'id_nv':'NV', 'cliente':'Cliente', 'moneda':'Moneda', 'porcentaje':'% a Cobrar', 'monto':'Monto Parcial', 'estado':'Estado Factura'}, inplace=True)
+                        df_show_hitos['porcentaje'] = df_show_hitos['porcentaje'].apply(lambda x: f"{x:.1f}% del Total")
+                        df_show_hitos.rename(columns={'id_nv':'NV', 'cliente':'Cliente', 'moneda':'Moneda', 'porcentaje':'% Calculado', 'monto':'Monto Parcial', 'estado':'Estado Factura'}, inplace=True)
                         st.dataframe(df_show_hitos, use_container_width=True, hide_index=True)
                         
                         with st.expander("🔄 Actualizar Estado de una Factura del mes"):
@@ -1427,18 +1428,26 @@ def main_app():
                     if nv_hitos_sel:
                         row_h = df_kpi[df_kpi['Proyecto_Label'] == nv_hitos_sel].iloc[0]
                         id_nv_h = row_h['id_nv']
-                        monto_tot_h = row_h['monto_vendido']
+                        monto_tot_h = float(row_h['monto_vendido'])
                         moneda_h = row_h['moneda']
                         
                         df_hitos_nv = df_hitos[df_hitos['id_nv'] == id_nv_h]
-                        pct_planeado = df_hitos_nv['porcentaje'].sum() if not df_hitos_nv.empty else 0
-                        pct_restante = 100.0 - float(pct_planeado)
                         
-                        st.write(f"**Monto Total Proyecto:** {moneda_h} ${monto_tot_h:,.2f} | **Planificado:** {pct_planeado}% | **Por Planificar:** {pct_restante}%")
+                        # --- NUEVA LÓGICA: CÁLCULO SOBRE SALDO RESTANTE ---
+                        monto_planeado = float(df_hitos_nv['monto'].sum()) if not df_hitos_nv.empty else 0.0
+                        monto_restante = monto_tot_h - monto_planeado
+                        
+                        pct_planeado_real = (monto_planeado / monto_tot_h * 100) if monto_tot_h > 0 else 0.0
+                        pct_restante_real = 100.0 - pct_planeado_real
+                        
+                        st.write(f"**Monto Total Proyecto:** {moneda_h} ${monto_tot_h:,.2f} | **Monto Restante:** {moneda_h} ${monto_restante:,.2f}")
+                        st.write(f"**Planificado:** {pct_planeado_real:.1f}% | **Por Planificar:** {pct_restante_real:.1f}%")
                         
                         if not df_hitos_nv.empty:
                             df_hnv_show = df_hitos_nv[['id', 'mes', 'anio', 'porcentaje', 'monto', 'estado']].copy()
                             df_hnv_show['mes'] = df_hnv_show['mes'].apply(lambda x: MESES_ES.get(x, x))
+                            # Redondear el porcentaje visualmente para que no confunda
+                            df_hnv_show['porcentaje'] = df_hnv_show['porcentaje'].apply(lambda x: f"{x:.1f}% del Total")
                             st.dataframe(df_hnv_show, use_container_width=True, hide_index=True)
                             
                             if st.button("🗑️ Borrar todos los hitos de esta NV"):
@@ -1449,23 +1458,30 @@ def main_app():
                                 except Exception as e:
                                     st.error("Error al eliminar hitos.")
                             
-                        if pct_restante > 0:
-                            st.markdown("Añadir nueva parcialidad:")
+                        # Usamos 0.01 para evitar problemas con decimales microscópicos de Python
+                        if round(monto_restante, 2) > 0:
+                            st.markdown(f"**Añadir nueva parcialidad sobre el saldo restante ({moneda_h} ${monto_restante:,.2f}):**")
                             with st.form("form_add_hito"):
                                 c_hm, c_ha, c_hp = st.columns(3)
                                 h_mes = c_hm.selectbox("Mes de Facturación", list(MESES_ES.values()))
                                 h_anio = c_ha.selectbox("Año", lista_anios, index=lista_anios.index(año_actual))
-                                h_pct = c_hp.number_input("Porcentaje (%) a cobrar", min_value=0.1, max_value=float(pct_restante), step=1.0)
+                                h_pct = c_hp.number_input("Porcentaje (%) DEL SALDO RESTANTE", min_value=0.1, max_value=100.0, step=1.0, value=100.0)
                                 
                                 if st.form_submit_button("Agregar Hito de Cobro", use_container_width=True):
                                     mes_n = list(MESES_ES.keys())[list(MESES_ES.values()).index(h_mes)]
-                                    monto_calc = (h_pct / 100.0) * monto_tot_h
+                                    
+                                    # El monto se calcula basado en el % del monto RESTANTE
+                                    monto_calc = (h_pct / 100.0) * monto_restante
+                                    
+                                    # Guardamos el porcentaje real respecto al total en la BD para consistencia
+                                    pct_sobre_total = (monto_calc / monto_tot_h) * 100 if monto_tot_h > 0 else 0
+                                    
                                     try:
                                         supabase.table("hitos_facturacion").insert({
                                             "id_nv": id_nv_h,
                                             "mes": mes_n,
                                             "anio": h_anio,
-                                            "porcentaje": h_pct,
+                                            "porcentaje": pct_sobre_total,
                                             "monto": monto_calc,
                                             "estado": "Pendiente"
                                         }).execute()
