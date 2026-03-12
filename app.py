@@ -629,8 +629,13 @@ def main_app():
                     
                     for i in range((f_f - f_i).days + 1):
                         d = f_i + timedelta(days=i)
-                        if not trabajo_continuo and d.weekday() >= 5:
+                        # --- MEJORA: PINTAR CORRECTAMENTE SEGÚN FERIADOS ---
+                        es_feriado = d.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
+                        es_finde = d.weekday() >= 5
+                        
+                        if not trabajo_continuo and (es_finde or es_feriado):
                             continue
+                            
                         if d in fechas_rango:
                             col = d.strftime("%d-%m-%Y")
                             valor_actual = str(matriz_final.at[a['especialista'], col])
@@ -791,7 +796,8 @@ def main_app():
                                     
                                     col_d, col_e = st.columns(2)
                                     dias_trabajo = col_d.number_input("Días de duración (Aumentar para reprogramar)", min_value=1, value=dias_estimados)
-                                    extras = col_d.radio("Fines de semana", ["Libres (Descanso)", "Extras (Sáb/Dom)"], index=1 if is_extras else 0)
+                                    # --- ACTUALIZACIÓN DE TEXTO PARA MAYOR CLARIDAD ---
+                                    extras = col_d.radio("Fines de semana y Feriados", ["Libres (Descanso)", "Extras (Sáb/Dom/Feriado)"], index=1 if is_extras else 0)
                                     
                                     if nv_data_sel.get('tipo_servicio') == 'SE TERRENO':
                                         st.markdown("#### 🕒 Horarios Especiales de Terreno")
@@ -827,7 +833,7 @@ def main_app():
                                                     
                                                 supabase.table("asignaciones_personal").delete().eq("id_nv", nv_id_sel).eq("actividad_ssee", act).execute()
                                                 
-                                                incluye_finde = True if extras == "Extras (Sáb/Dom)" else False
+                                                incluye_finde = True if "Extras" in extras else False
                                                 f_f = calcular_fecha_fin_dinamica(f_ini, dias_trabajo, incluye_finde)
                                                 hh_final = calcular_hh_ssee(f_ini, f_f, incluye_finde, horas_diarias=h_diarias_val)
                                                 
@@ -930,31 +936,41 @@ def main_app():
                         new_row['Etiqueta_Barra'] = "⚠️ SIN FECHA"
                         expanded_rows.append(new_row)
                     elif row['comentarios'] == 'LIBRES':
+                        # --- MEJORA EN GANTT: FRAGMENTAR EN FINES DE SEMANA Y FERIADOS ---
                         current_chunk_start = start
                         current_day = start.date()
                         end_day = end.date()
+                        
                         while current_day <= end_day:
-                            if current_day.weekday() == 5: 
-                                friday = current_day - pd.Timedelta(days=1)
-                                chunk_end = pd.Timestamp.combine(friday, end.time())
-                                if current_chunk_start < chunk_end:
+                            es_feriado = current_day.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
+                            es_finde = current_day.weekday() >= 5
+                            
+                            if es_finde or es_feriado:
+                                # Si el día actual es festivo o finde, cortamos el bloque anterior si existe
+                                prev_day = current_day - pd.Timedelta(days=1)
+                                chunk_end = pd.Timestamp.combine(prev_day, end.time())
+                                
+                                if current_chunk_start <= chunk_end:
                                     new_row = row.copy()
                                     new_row['start_ts'] = current_chunk_start
                                     new_row['end_ts'] = chunk_end
                                     new_row['Inicio'] = current_chunk_start.strftime('%d/%m/%Y %H:%M')
                                     new_row['Fin'] = chunk_end.strftime('%d/%m/%Y %H:%M')
                                     expanded_rows.append(new_row)
-                                monday = current_day + pd.Timedelta(days=2)
-                                current_chunk_start = pd.Timestamp.combine(monday, start.time())
+                                
+                                # Avanzamos el inicio del próximo bloque al día siguiente
+                                next_day = current_day + pd.Timedelta(days=1)
+                                current_chunk_start = pd.Timestamp.combine(next_day, start.time())
                             elif current_day == end_day:
-                                if current_day.weekday() < 5: 
-                                    if current_chunk_start <= end:
-                                        new_row = row.copy()
-                                        new_row['start_ts'] = current_chunk_start
-                                        new_row['end_ts'] = end
-                                        new_row['Inicio'] = current_chunk_start.strftime('%d/%m/%Y %H:%M')
-                                        new_row['Fin'] = end.strftime('%d/%m/%Y %H:%M')
-                                        expanded_rows.append(new_row)
+                                # Si es el último día y es hábil, agregamos el bloque final
+                                if current_chunk_start <= end:
+                                    new_row = row.copy()
+                                    new_row['start_ts'] = current_chunk_start
+                                    new_row['end_ts'] = end
+                                    new_row['Inicio'] = current_chunk_start.strftime('%d/%m/%Y %H:%M')
+                                    new_row['Fin'] = end.strftime('%d/%m/%Y %H:%M')
+                                    expanded_rows.append(new_row)
+                            
                             current_day += pd.Timedelta(days=1)
                     else:
                         row['Inicio'] = start.strftime('%d/%m/%Y %H:%M')
@@ -993,14 +1009,24 @@ def main_app():
                 if not pd.isnull(min_date):
                     curr = min_date.replace(hour=0, minute=0, second=0, microsecond=0)
                     while curr <= max_date + pd.Timedelta(days=2):
-                        if curr.weekday() == 5:
+                        # --- MEJORA EN GANTT: PINTAR FINES DE SEMANA Y FERIADOS ---
+                        str_curr = curr.strftime("%d-%m-%Y")
+                        es_feriado = str_curr in FERIADOS_CHILE_2026
+                        es_finde = curr.weekday() >= 5
+                        
+                        if es_finde or es_feriado:
+                            label_txt = "FERIADO" if es_feriado else "SÁB / DOM"
+                            color_fill = "#D5D8DC" if es_feriado else "#FADBD8"
+                            color_line = "#ABB2B9" if es_feriado else "#E6B0AA"
+                            color_font = "#566573" if es_feriado else "#C0392B"
+                            
                             fig.add_vrect(
                                 x0=curr.strftime("%Y-%m-%d 08:00:00"), 
                                 x1=(curr + timedelta(days=1)).strftime("%Y-%m-%d 17:30:00"),
-                                fillcolor="#FADBD8", opacity=0.4, 
-                                annotation_text="SÁB / DOM (DESCANSO)", annotation_position="top left",
-                                annotation_font_color="#C0392B", annotation_font_size=10,
-                                layer="below", line_width=1.5, line_dash="dot", line_color="#E6B0AA"
+                                fillcolor=color_fill, opacity=0.4, 
+                                annotation_text=f"{label_txt} (DESCANSO)", annotation_position="top left",
+                                annotation_font_color=color_font, annotation_font_size=10,
+                                layer="below", line_width=1.5, line_dash="dot", line_color=color_line
                             )
                         curr += timedelta(days=1)
                 
@@ -1527,7 +1553,6 @@ def main_app():
                         
                         df_hitos_nv = df_hitos[df_hitos['id_nv'] == id_nv_h]
                         
-                        # --- LÓGICA: CÁLCULO SOBRE SALDO RESTANTE ---
                         monto_planeado = float(df_hitos_nv['monto'].sum()) if not df_hitos_nv.empty else 0.0
                         monto_restante = monto_tot_h - monto_planeado
                         
@@ -1562,10 +1587,8 @@ def main_app():
                                 if st.form_submit_button("Agregar Hito de Cobro", use_container_width=True):
                                     mes_n = list(MESES_ES.keys())[list(MESES_ES.values()).index(h_mes)]
                                     
-                                    # El monto se calcula basado en el % del monto RESTANTE
                                     monto_calc = (h_pct / 100.0) * monto_restante
                                     
-                                    # Guardamos el porcentaje real respecto al total en la BD para no perder la proporción histórica
                                     pct_sobre_total = (monto_calc / monto_tot_h) * 100 if monto_tot_h > 0 else 0
                                     
                                     try:
@@ -1584,12 +1607,10 @@ def main_app():
                         else:
                             st.success("✅ El 100% de este proyecto ya ha sido planificado en hitos.")
 
-            # --- NUEVA PESTAÑA: BACKLOG Y PENDIENTES ---
             with tab_pendientes:
                 st.subheader("Servicios Pendientes (Backlog de Facturación y Ejecución)")
                 st.info("Aquí se listan todos los proyectos que tienen un saldo pendiente por facturar, descontando automáticamente las parcialidades ya facturadas.")
                 
-                # Excluimos lo que ya se facturó usando la nueva columna 'monto_pendiente'
                 df_pendientes = df_kpi[df_kpi['monto_pendiente'] > 0].copy()
                 
                 if not df_pendientes.empty:
