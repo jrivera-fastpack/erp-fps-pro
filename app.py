@@ -1579,6 +1579,15 @@ def main_app():
                             df_hnv_show = df_hitos_nv[['id', 'mes', 'anio', 'porcentaje', 'monto', 'estado']].copy()
                             df_hnv_show['mes'] = df_hnv_show['mes'].apply(lambda x: MESES_ES.get(x, x))
                             df_hnv_show['porcentaje'] = df_hnv_show['porcentaje'].apply(lambda x: f"{x:.1f}% del Total")
+                            
+                            # MEJORA: Formateo correcto del monto con puntos y signo peso en la tabla de hitos
+                            if moneda_h == 'CLP':
+                                df_hnv_show['monto'] = df_hnv_show['monto'].apply(lambda x: f"CLP ${x:,.0f}".replace(",", "."))
+                            else:
+                                df_hnv_show['monto'] = df_hnv_show['monto'].apply(lambda x: f"USD ${x:,.2f}")
+                                
+                            df_hnv_show.rename(columns={'id':'ID', 'mes':'Mes', 'anio':'Año', 'porcentaje':'% Calculado', 'monto':'Monto Parcial', 'estado':'Estado Factura'}, inplace=True)
+                            
                             st.dataframe(df_hnv_show, use_container_width=True, hide_index=True)
                             
                             if st.button("🗑️ Borrar todos los hitos de esta NV"):
