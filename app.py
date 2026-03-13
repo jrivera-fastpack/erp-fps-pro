@@ -351,7 +351,12 @@ def main_app():
                     lugar = c3.text_input("Lugar / Faena")
                     col_mon, col_mnt = c3.columns([1, 2])
                     moneda = col_mon.selectbox("Moneda", ["CLP", "USD"])
-                    monto = col_mnt.number_input("Monto Ofertado (De este ítem)", min_value=0.0, step=0.001, format="%.3f")
+                    
+                    # Adaptar el formato según la moneda seleccionada para evitar decimales innecesarios en CLP
+                    if moneda == "CLP":
+                        monto = col_mnt.number_input("Monto Ofertado (De este ítem)", min_value=0.0, step=1.0, format="%.0f")
+                    else:
+                        monto = col_mnt.number_input("Monto Ofertado (De este ítem)", min_value=0.0, step=0.01, format="%.2f")
                     
                     st.divider()
                     st.markdown("### Proyección en Matriz Semanal (Opcional)")
@@ -1103,7 +1108,7 @@ def main_app():
                         c_g1, c_g2, c_g3, c_g4 = st.columns(4)
                         nv_g_label = c_g1.selectbox("Proyecto Asociado", [f"{n['id_nv']} - {n['cliente']}" for n in nvs_activas])
                         t_g = c_g2.selectbox("Ítem", ["Rendigastos", "Viático", "Hospedaje", "Pasajes", "Insumos"])
-                        m_g = c_g3.number_input("Monto del Gasto (CLP)", min_value=0.0, step=1.0)
+                        m_g = c_g3.number_input("Monto del Gasto (CLP)", min_value=0.0, step=1.0, format="%.0f")
                         f_gasto = c_g4.date_input("Fecha Gasto", format="DD/MM/YYYY")
                         
                         if st.form_submit_button("Guardar Gasto"):
