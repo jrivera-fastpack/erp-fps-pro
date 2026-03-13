@@ -341,13 +341,17 @@ def main_app():
 
                 with st.form(key=f"form_comercial_{st.session_state.form_key_comercial}"):
                     c1, c2, c3 = st.columns(3)
-                    id_nv = c1.text_input("ID Nota de Venta")
-                    cliente = c1.text_input("Cliente")
+                    
+                    id_nv_base = c1.text_input("ID Nota de Venta base")
+                    item_nv = c1.text_input("Ítem / Fase (Opcional)", help="Para separar una misma NV en entregables/facturas distintas. Ej: 'Item 1'. El sistema guardará el registro como 'NV - Item'.")
+                    
+                    cliente = c2.text_input("Cliente")
                     tipo = c2.selectbox("Tipo de Servicio", ["SSEE", "SE TERRENO"])
-                    lugar = c2.text_input("Lugar / Faena")
+                    
+                    lugar = c3.text_input("Lugar / Faena")
                     col_mon, col_mnt = c3.columns([1, 2])
                     moneda = col_mon.selectbox("Moneda", ["CLP", "USD"])
-                    monto = col_mnt.number_input("Monto Ofertado", min_value=0.0, step=0.001, format="%.3f")
+                    monto = col_mnt.number_input("Monto Ofertado (De este ítem)", min_value=0.0, step=0.001, format="%.3f")
                     
                     st.divider()
                     st.markdown("### Proyección en Matriz Semanal (Opcional)")
@@ -371,11 +375,14 @@ def main_app():
                     incluye_finde = st.radio("¿Considerar fines de semana en esta proyección?", ["No (Saltar Sáb/Dom)", "Sí (Días continuos)"], horizontal=True)
 
                     if st.form_submit_button("Guardar Nota de Venta", use_container_width=True):
+                        # Fusión del ID Base con el Ítem para crear un sub-proyecto único
+                        id_nv = f"{id_nv_base.strip()} - {item_nv.strip()}" if item_nv.strip() else id_nv_base.strip()
+                        
                         if id_nv and cliente:
                             try:
                                 verificacion = supabase.table("notas_venta").select("id_nv").eq("id_nv", id_nv).execute()
                                 if len(verificacion.data) > 0:
-                                    st.warning(f"⚠️ La Nota de Venta '{id_nv}' ya se encuentra registrada en el sistema.")
+                                    st.warning(f"⚠️ El registro '{id_nv}' ya se encuentra en el sistema. Cambie el número de Ítem.")
                                 else:
                                     if especialistas_sel and dias_v > 0 and f_ini is not None:
                                         es_continuo = incluye_finde == "Sí (Días continuos)"
@@ -425,7 +432,7 @@ def main_app():
                                                 }
                                                 safe_insert_asignacion(p_asig)
                                                 
-                                            st.success(f"✅ NV {id_nv} registrada exitosamente.")
+                                            st.success(f"✅ Registro {id_nv} guardado exitosamente.")
                                             st.session_state.form_key_comercial += 1
                                             st.rerun()
                                     else:
@@ -434,7 +441,7 @@ def main_app():
                                             "lugar": lugar, "moneda": moneda, "monto_vendido": monto, 
                                             "hh_vendidas": dias_v, "estado": "Abierta"
                                         }).execute()
-                                        st.success(f"✅ NV {id_nv} registrada exitosamente.")
+                                        st.success(f"✅ Registro {id_nv} guardado exitosamente.")
                                         st.session_state.form_key_comercial += 1
                                         st.rerun()
                             except Exception as e:
