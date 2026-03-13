@@ -187,7 +187,7 @@ def calcular_hh_ssee(f_ini, f_fin, incluye_finde=False, horas_diarias=None):
 
 def obtener_nvs(estado_filter=None):
     query = supabase.table("notas_venta").select("*").neq("id_nv", "AUSENCIA")
-    if estado_filter: query = query.eq("estado", estado_filter)
+    if estado_filter: query = query.eq("estado", filter_val=estado_filter)
     return query.execute().data
 
 # --- CONTROL DE SESIÓN ---
@@ -352,11 +352,11 @@ def main_app():
                     col_mon, col_mnt = c3.columns([1, 2])
                     moneda = col_mon.selectbox("Moneda", ["CLP", "USD"])
                     
-                    # Adaptar el formato según la moneda seleccionada para evitar decimales innecesarios en CLP
+                    # MEJORA: Evitar redondeo y permitir formato libre (14.538.342) en Pesos
                     if moneda == "CLP":
-                        monto = col_mnt.number_input("Monto Ofertado (De este ítem)", min_value=0.0, step=1.0, format="%.0f")
+                        monto_str = col_mnt.text_input("Monto Ofertado (De este ítem)", value="", placeholder="Ej: 14.538.342")
                     else:
-                        monto = col_mnt.number_input("Monto Ofertado (De este ítem)", min_value=0.0, step=0.01, format="%.2f")
+                        monto_usd = col_mnt.number_input("Monto Ofertado (De este ítem)", min_value=0.0, step=0.01, format="%.2f")
                     
                     st.divider()
                     st.markdown("### Proyección en Matriz Semanal (Opcional)")
@@ -380,8 +380,14 @@ def main_app():
                     incluye_finde = st.radio("¿Considerar fines de semana en esta proyección?", ["No (Saltar Sáb/Dom)", "Sí (Días continuos)"], horizontal=True)
 
                     if st.form_submit_button("Guardar Nota de Venta", use_container_width=True):
-                        # Fusión del ID Base con el Ítem para crear un sub-proyecto único
                         id_nv = f"{id_nv_base.strip()} - {item_nv.strip()}" if item_nv.strip() else id_nv_base.strip()
+                        
+                        # Limpiar formato libre de CLP para guardarlo exacto matemáticamente
+                        if moneda == "CLP":
+                            m_clean = str(monto_str).replace(".", "").replace(",", "").strip()
+                            monto = float(m_clean) if m_clean.isdigit() else 0.0
+                        else:
+                            monto = monto_usd
                         
                         if id_nv and cliente:
                             try:
@@ -641,7 +647,6 @@ def main_app():
                     
                     for i in range((f_f - f_i).days + 1):
                         d = f_i + timedelta(days=i)
-                        # --- MEJORA: PINTAR CORRECTAMENTE SEGÚN FERIADOS ---
                         es_feriado = d.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
                         es_finde = d.weekday() >= 5
                         
@@ -808,7 +813,6 @@ def main_app():
                                     
                                     col_d, col_e = st.columns(2)
                                     dias_trabajo = col_d.number_input("Días de duración (Aumentar para reprogramar)", min_value=1, value=dias_estimados)
-                                    # --- ACTUALIZACIÓN DE TEXTO PARA MAYOR CLARIDAD ---
                                     extras = col_d.radio("Fines de semana y Feriados", ["Libres (Descanso)", "Extras (Sáb/Dom/Feriado)"], index=1 if is_extras else 0)
                                     
                                     if nv_data_sel.get('tipo_servicio') == 'SE TERRENO':
@@ -948,7 +952,6 @@ def main_app():
                         new_row['Etiqueta_Barra'] = "⚠️ SIN FECHA"
                         expanded_rows.append(new_row)
                     elif row['comentarios'] == 'LIBRES':
-                        # --- MEJORA EN GANTT: FRAGMENTAR EN FINES DE SEMANA Y FERIADOS ---
                         current_chunk_start = start
                         current_day = start.date()
                         end_day = end.date()
@@ -958,7 +961,6 @@ def main_app():
                             es_finde = current_day.weekday() >= 5
                             
                             if es_finde or es_feriado:
-                                # Si el día actual es festivo o finde, cortamos el bloque anterior si existe
                                 prev_day = current_day - pd.Timedelta(days=1)
                                 chunk_end = pd.Timestamp.combine(prev_day, end.time())
                                 
@@ -970,11 +972,9 @@ def main_app():
                                     new_row['Fin'] = chunk_end.strftime('%d/%m/%Y %H:%M')
                                     expanded_rows.append(new_row)
                                 
-                                # Avanzamos el inicio del próximo bloque al día siguiente
                                 next_day = current_day + pd.Timedelta(days=1)
                                 current_chunk_start = pd.Timestamp.combine(next_day, start.time())
                             elif current_day == end_day:
-                                # Si es el último día y es hábil, agregamos el bloque final
                                 if current_chunk_start <= end:
                                     new_row = row.copy()
                                     new_row['start_ts'] = current_chunk_start
@@ -1021,7 +1021,6 @@ def main_app():
                 if not pd.isnull(min_date):
                     curr = min_date.replace(hour=0, minute=0, second=0, microsecond=0)
                     while curr <= max_date + pd.Timedelta(days=2):
-                        # --- MEJORA EN GANTT: PINTAR FINES DE SEMANA Y FERIADOS ---
                         str_curr = curr.strftime("%d-%m-%Y")
                         es_feriado = str_curr in FERIADOS_CHILE_2026
                         es_finde = curr.weekday() >= 5
@@ -1092,14 +1091,12 @@ def main_app():
         if not nvs_all:
             st.warning("No hay notas de venta registradas para analizar.")
         else:
-            # --- OBTENCIÓN SEGURA DE HITOS ---
             try:
                 hitos_raw = supabase.table("hitos_facturacion").select("*").execute().data
                 df_hitos = pd.DataFrame(hitos_raw) if hitos_raw else pd.DataFrame(columns=["id", "id_nv", "mes", "anio", "porcentaje", "monto", "estado"])
             except Exception:
                 df_hitos = pd.DataFrame(columns=["id", "id_nv", "mes", "anio", "porcentaje", "monto", "estado"])
 
-            # REGISTRO DE GASTOS
             nvs_activas = obtener_nvs("Abierta")
             if nvs_activas:
                 with st.expander("➕ REGISTRAR GASTO OPERATIVO (Siempre en CLP)"):
@@ -1108,10 +1105,15 @@ def main_app():
                         c_g1, c_g2, c_g3, c_g4 = st.columns(4)
                         nv_g_label = c_g1.selectbox("Proyecto Asociado", [f"{n['id_nv']} - {n['cliente']}" for n in nvs_activas])
                         t_g = c_g2.selectbox("Ítem", ["Rendigastos", "Viático", "Hospedaje", "Pasajes", "Insumos"])
-                        m_g = c_g3.number_input("Monto del Gasto (CLP)", min_value=0.0, step=1.0, format="%.0f")
+                        
+                        # MEJORA: Evitar redondeo permitiendo campo de texto libre con puntos (ej. 1.500.000)
+                        m_g_str = c_g3.text_input("Monto del Gasto (CLP)", value="", placeholder="Ej: 1.500.000")
                         f_gasto = c_g4.date_input("Fecha Gasto", format="DD/MM/YYYY")
                         
                         if st.form_submit_button("Guardar Gasto"):
+                            m_g_clean = str(m_g_str).replace(".", "").replace(",", "").strip()
+                            m_g = float(m_g_clean) if m_g_clean.isdigit() else 0.0
+                            
                             try:
                                 supabase.table("control_gastos").insert({
                                     "id_nv": nv_g_label.split(" - ")[0], 
@@ -1165,13 +1167,11 @@ def main_app():
             df_kpi['id_nv_str'] = df_kpi['id_nv'].astype(str)
             df_kpi['Proyecto_Label'] = df_kpi['id_nv_str'] + " (" + df_kpi['cliente'] + ")"
             
-            # --- MANEJO SEGURO COLUMNA ESTADO FACTURACIÓN ---
             if 'estado_facturacion' not in df_kpi.columns:
                 df_kpi['estado_facturacion'] = 'Pendiente'
             else:
                 df_kpi['estado_facturacion'] = df_kpi['estado_facturacion'].fillna('Pendiente')
                 
-            # --- CÁLCULO DE MONTO PENDIENTE Y BACKLOG REAL ---
             if not df_hitos.empty:
                 hitos_facturados = df_hitos[df_hitos['estado'] == 'Facturada'].groupby('id_nv')['monto'].sum().reset_index()
                 hitos_facturados.rename(columns={'monto': 'monto_facturado_hitos'}, inplace=True)
@@ -1259,9 +1259,12 @@ def main_app():
                     fmt_tot = f"USD ${total_venta_usd:,.2f}"
                     fmt_gas_usd = f"USD ${total_gasto_usd:,.2f}"
                     
+                    # MEJORA DE FORMATO EN PANTALLA: Reemplazar comas por puntos en CLP
+                    gasto_clp_fmt = f"{total_gasto_clp:,.0f}".replace(",", ".")
+                    
                     col1, col2 = st.columns(2)
                     col1.metric(f"Cartera Ofertada Consolidada en {mes_sel}", fmt_tot)
-                    col2.metric("Ejecución de Gasto Acumulado (USD)", fmt_gas_usd, help=f"Tus rendiciones originales suman CLP ${total_gasto_clp:,.0f} convertidas a la tasa actual.")
+                    col2.metric("Ejecución de Gasto Acumulado (USD)", fmt_gas_usd, help=f"Tus rendiciones originales suman CLP ${gasto_clp_fmt} convertidas a la tasa actual.")
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     c_graf1, c_graf2 = st.columns(2)
@@ -1323,9 +1326,10 @@ def main_app():
                     hh_p = d_p * 9.0  
                     estado_nv = row_nv['estado']
                     
-                    fmt_v = f"{mon} ${m_v:,.0f}" if mon == 'CLP' else f"{mon} ${m_v:,.3f}"
-                    fmt_g_clp = f"CLP ${m_g_clp:,.0f}"
-                    fmt_m = f"{mon} ${m_m:,.0f}" if mon == 'CLP' else f"{mon} ${m_m:,.3f}"
+                    # MEJORA: Formatear correctamente con puntos si es CLP
+                    fmt_v = f"{mon} ${m_v:,.0f}".replace(",", ".") if mon == 'CLP' else f"{mon} ${m_v:,.2f}"
+                    fmt_g_clp = f"CLP ${m_g_clp:,.0f}".replace(",", ".")
+                    fmt_m = f"{mon} ${m_m:,.0f}".replace(",", ".") if mon == 'CLP' else f"{mon} ${m_m:,.2f}"
                     
                     st.markdown(f"**Estado del Proyecto:** `{'🟢 ABIERTA' if estado_nv == 'Abierta' else '🔴 CERRADA'}`")
                     if mon == 'USD':
@@ -1431,10 +1435,12 @@ def main_app():
                         if not df_detalles.empty:
                             df_det_display = df_detalles[['fecha_gasto', 'tipo_gasto', 'monto_gasto']].copy()
                             df_det_display.rename(columns={'fecha_gasto': 'Fecha', 'tipo_gasto': 'Ítem', 'monto_gasto': 'Monto (CLP)'}, inplace=True)
+                            
+                            # Formateo correcto de Gastos
                             if mon == 'USD':
                                 df_det_display['Equivalente (USD)'] = df_det_display['Monto (CLP)'] / tasa_cambio
-                                df_det_display['Equivalente (USD)'] = df_det_display['Equivalente (USD)'].apply(lambda x: f"USD ${x:,.3f}")
-                            df_det_display['Monto (CLP)'] = df_det_display['Monto (CLP)'].apply(lambda x: f"CLP ${x:,.0f}")
+                                df_det_display['Equivalente (USD)'] = df_det_display['Equivalente (USD)'].apply(lambda x: f"USD ${x:,.2f}")
+                            df_det_display['Monto (CLP)'] = df_det_display['Monto (CLP)'].apply(lambda x: f"CLP ${x:,.0f}".replace(",", "."))
                             st.dataframe(df_det_display, use_container_width=True, hide_index=True)
                         else:
                             st.info("Sin gastos registrados.")
@@ -1465,7 +1471,6 @@ def main_app():
                 df_all_valid_asig = pd.DataFrame()
                 if asig_all_raw:
                     df_temp_asig = pd.DataFrame(asig_all_raw)
-                    # Incluimos PROYECCION_GLOBAL para detectar fechas recién creadas en Comercial
                     df_all_valid_asig = df_temp_asig[(df_temp_asig['id_nv'] != 'AUSENCIA') & (df_temp_asig['comentarios'] != 'SIN_PROGRAMAR')]
 
                 if not df_all_valid_asig.empty:
@@ -1473,13 +1478,11 @@ def main_app():
                     df_max_fin['fecha_fin'] = pd.to_datetime(df_max_fin['fecha_fin']).dt.date
                     df_kpi_auto = df_kpi.merge(df_max_fin, on='id_nv', how='inner')
                     
-                    # Proyectos que terminan su ejecución física en el mes seleccionado
                     mask_auto = (pd.to_datetime(df_kpi_auto['fecha_fin']).dt.month == mes_num_t) & (pd.to_datetime(df_kpi_auto['fecha_fin']).dt.year == anio_sel_t)
                     nvs_auto = df_kpi_auto[mask_auto]
                     
                     nuevas_filas = []
                     for _, r_auto in nvs_auto.iterrows():
-                        # Si no se le ha planificado NINGÚN hito de facturación aún
                         has_hitos_ever = not df_hitos[df_hitos['id_nv'] == r_auto['id_nv']].empty
                         if not has_hitos_ever and r_auto['estado_facturacion'] != 'Facturada':
                             monto_pend = r_auto['monto_pendiente']
@@ -1505,13 +1508,13 @@ def main_app():
                     df_show_hitos = df_hitos_mes[['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
                     df_show_hitos['porcentaje'] = df_show_hitos['porcentaje'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) and isinstance(x, (int, float)) else x)
                     
-                    # AÑADIR FILA DE TOTALES
                     total_row = pd.DataFrame([{
                         'id': '', 'id_nv': 'TOTALES', 'cliente': '', 'moneda': 'USD (Equiv)', 
                         'porcentaje': '', 'monto': tot_fact_est, 'estado': ''
                     }])
                     df_show_hitos = pd.concat([df_show_hitos, total_row], ignore_index=True)
                     
+                    # Formateo correcto de la tabla aplicando puntos para miles en CLP
                     def format_monto(val, mon, id_val):
                         if pd.isna(val) or val == '': return ''
                         try:
@@ -1520,7 +1523,7 @@ def main_app():
                             return val
                         if id_val == '' and mon == 'USD (Equiv)': return f"USD ${v:,.2f}"
                         if mon == 'USD': return f"USD ${v:,.2f}"
-                        return f"CLP ${v:,.0f}"
+                        return f"CLP ${v:,.0f}".replace(",", ".")
                         
                     df_show_hitos['Monto Parcial'] = df_show_hitos.apply(lambda x: format_monto(x['monto'], x['moneda'], x['id']), axis=1)
                     df_show_hitos.drop(columns=['monto'], inplace=True)
@@ -1571,7 +1574,11 @@ def main_app():
                         pct_planeado_real = (monto_planeado / monto_tot_h * 100) if monto_tot_h > 0 else 0.0
                         pct_restante_real = 100.0 - pct_planeado_real
                         
-                        st.write(f"**Monto Total Proyecto:** {moneda_h} ${monto_tot_h:,.2f} | **Monto Restante por Asignar:** {moneda_h} ${monto_restante:,.2f}")
+                        # Formatear la vista del monto exacto sin redondear
+                        m_tot_str = f"{moneda_h} ${monto_tot_h:,.0f}".replace(",", ".") if moneda_h == 'CLP' else f"{moneda_h} ${monto_tot_h:,.2f}"
+                        m_res_str = f"{moneda_h} ${monto_restante:,.0f}".replace(",", ".") if moneda_h == 'CLP' else f"{moneda_h} ${monto_restante:,.2f}"
+                        
+                        st.write(f"**Monto Total Proyecto:** {m_tot_str} | **Monto Restante por Asignar:** {m_res_str}")
                         st.write(f"**Planificado:** {pct_planeado_real:.1f}% | **Por Planificar:** {pct_restante_real:.1f}%")
                         
                         if not df_hitos_nv.empty:
@@ -1589,7 +1596,7 @@ def main_app():
                                     st.error("Error al eliminar hitos.")
                             
                         if round(monto_restante, 2) > 0:
-                            st.markdown(f"**Añadir nueva parcialidad sobre el saldo restante ({moneda_h} ${monto_restante:,.2f}):**")
+                            st.markdown(f"**Añadir nueva parcialidad sobre el saldo restante ({m_res_str}):**")
                             with st.form("form_add_hito"):
                                 c_hm, c_ha, c_hp = st.columns(3)
                                 h_mes = c_hm.selectbox("Mes de Facturación", list(MESES_ES.values()))
@@ -1600,7 +1607,6 @@ def main_app():
                                     mes_n = list(MESES_ES.keys())[list(MESES_ES.values()).index(h_mes)]
                                     
                                     monto_calc = (h_pct / 100.0) * monto_restante
-                                    
                                     pct_sobre_total = (monto_calc / monto_tot_h) * 100 if monto_tot_h > 0 else 0
                                     
                                     try:
@@ -1697,8 +1703,9 @@ def main_app():
                     pdf.cell(0, 15, "REPORTE EJECUTIVO DE CIERRE - COORDINACIÓN FPS", ln=True, align='C')
                     pdf.ln(5)
                     
-                    fmt_v_pdf = f"{info_nv['monto_vendido']:,.0f}" if moneda == 'CLP' else f"{info_nv['monto_vendido']:,.3f}"
-                    fmt_g_pdf = f"{sum_gas_real:,.0f}" if moneda == 'CLP' else f"{sum_gas_real:,.3f}"
+                    # Formateo correcto en PDF (puntos para CLP)
+                    fmt_v_pdf = f"{info_nv['monto_vendido']:,.0f}".replace(",", ".") if moneda == 'CLP' else f"{info_nv['monto_vendido']:,.2f}"
+                    fmt_g_pdf = f"{sum_gas_real:,.0f}".replace(",", ".") if moneda == 'CLP' else f"{sum_gas_real:,.2f}"
                     
                     pdf.set_font("Arial", '', 12)
                     pdf.set_text_color(0, 0, 0)
