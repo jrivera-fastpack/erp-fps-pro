@@ -187,7 +187,7 @@ def calcular_hh_ssee(f_ini, f_fin, incluye_finde=False, horas_diarias=None):
 
 def obtener_nvs(estado_filter=None):
     query = supabase.table("notas_venta").select("*").neq("id_nv", "AUSENCIA")
-    if estado_filter: query = query.eq("estado", filter_val=estado_filter)
+    if estado_filter: query = query.eq("estado", estado_filter)
     return query.execute().data
 
 # --- CONTROL DE SESIÓN ---
@@ -1106,7 +1106,6 @@ def main_app():
                         nv_g_label = c_g1.selectbox("Proyecto Asociado", [f"{n['id_nv']} - {n['cliente']}" for n in nvs_activas])
                         t_g = c_g2.selectbox("Ítem", ["Rendigastos", "Viático", "Hospedaje", "Pasajes", "Insumos"])
                         
-                        # MEJORA: Evitar redondeo permitiendo campo de texto libre con puntos (ej. 1.500.000)
                         m_g_str = c_g3.text_input("Monto del Gasto (CLP)", value="", placeholder="Ej: 1.500.000")
                         f_gasto = c_g4.date_input("Fecha Gasto", format="DD/MM/YYYY")
                         
@@ -1259,7 +1258,6 @@ def main_app():
                     fmt_tot = f"USD ${total_venta_usd:,.2f}"
                     fmt_gas_usd = f"USD ${total_gasto_usd:,.2f}"
                     
-                    # MEJORA DE FORMATO EN PANTALLA: Reemplazar comas por puntos en CLP
                     gasto_clp_fmt = f"{total_gasto_clp:,.0f}".replace(",", ".")
                     
                     col1, col2 = st.columns(2)
@@ -1326,7 +1324,6 @@ def main_app():
                     hh_p = d_p * 9.0  
                     estado_nv = row_nv['estado']
                     
-                    # MEJORA: Formatear correctamente con puntos si es CLP
                     fmt_v = f"{mon} ${m_v:,.0f}".replace(",", ".") if mon == 'CLP' else f"{mon} ${m_v:,.2f}"
                     fmt_g_clp = f"CLP ${m_g_clp:,.0f}".replace(",", ".")
                     fmt_m = f"{mon} ${m_m:,.0f}".replace(",", ".") if mon == 'CLP' else f"{mon} ${m_m:,.2f}"
@@ -1435,8 +1432,6 @@ def main_app():
                         if not df_detalles.empty:
                             df_det_display = df_detalles[['fecha_gasto', 'tipo_gasto', 'monto_gasto']].copy()
                             df_det_display.rename(columns={'fecha_gasto': 'Fecha', 'tipo_gasto': 'Ítem', 'monto_gasto': 'Monto (CLP)'}, inplace=True)
-                            
-                            # Formateo correcto de Gastos
                             if mon == 'USD':
                                 df_det_display['Equivalente (USD)'] = df_det_display['Monto (CLP)'] / tasa_cambio
                                 df_det_display['Equivalente (USD)'] = df_det_display['Equivalente (USD)'].apply(lambda x: f"USD ${x:,.2f}")
@@ -1574,7 +1569,6 @@ def main_app():
                         pct_planeado_real = (monto_planeado / monto_tot_h * 100) if monto_tot_h > 0 else 0.0
                         pct_restante_real = 100.0 - pct_planeado_real
                         
-                        # Formatear la vista del monto exacto sin redondear
                         m_tot_str = f"{moneda_h} ${monto_tot_h:,.0f}".replace(",", ".") if moneda_h == 'CLP' else f"{moneda_h} ${monto_tot_h:,.2f}"
                         m_res_str = f"{moneda_h} ${monto_restante:,.0f}".replace(",", ".") if moneda_h == 'CLP' else f"{moneda_h} ${monto_restante:,.2f}"
                         
@@ -1703,7 +1697,6 @@ def main_app():
                     pdf.cell(0, 15, "REPORTE EJECUTIVO DE CIERRE - COORDINACIÓN FPS", ln=True, align='C')
                     pdf.ln(5)
                     
-                    # Formateo correcto en PDF (puntos para CLP)
                     fmt_v_pdf = f"{info_nv['monto_vendido']:,.0f}".replace(",", ".") if moneda == 'CLP' else f"{info_nv['monto_vendido']:,.2f}"
                     fmt_g_pdf = f"{sum_gas_real:,.0f}".replace(",", ".") if moneda == 'CLP' else f"{sum_gas_real:,.2f}"
                     
