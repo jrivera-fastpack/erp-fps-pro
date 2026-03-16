@@ -1782,11 +1782,11 @@ def main_app():
                 if not df_hitos.empty:
                     df_hitos_mes = df_hitos[(df_hitos['mes'] == mes_num_t) & (df_hitos['anio'] == anio_sel_t)].copy()
                     if not df_hitos_mes.empty:
-                        df_hitos_mes = df_hitos_mes.merge(df_kpi[['id_nv', 'cliente', 'moneda', 'monto_vendido', 'monto_pendiente']], on='id_nv', how='left')
+                        df_hitos_mes = df_hitos_mes.merge(df_kpi[['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'monto_vendido', 'monto_pendiente']], on='id_nv', how='left')
                         df_hitos_mes['monto_usd'] = df_hitos_mes.apply(lambda r: r['monto'] if r['moneda'] == 'USD' else r['monto'] / tasa_cambio, axis=1)
                 
                 if df_hitos_mes.empty:
-                    df_hitos_mes = pd.DataFrame(columns=['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado', 'monto_usd'])
+                    df_hitos_mes = pd.DataFrame(columns=['id', 'id_nv', 'cliente', 'tipo_servicio', 'moneda', 'porcentaje', 'monto', 'estado', 'monto_usd'])
 
                 # --- PRONÓSTICO AUTOMÁTICO DE EJECUCIÓN ---
                 df_all_valid_asig = pd.DataFrame()
@@ -1814,6 +1814,7 @@ def main_app():
                                     'id': 'Auto',
                                     'id_nv': r_auto['id_nv'],
                                     'cliente': r_auto['cliente'],
+                                    'tipo_servicio': r_auto['tipo_servicio'],
                                     'moneda': r_auto['moneda'],
                                     'porcentaje': 100.0,
                                     'monto': monto_pend,
@@ -1830,43 +1831,61 @@ def main_app():
                     str_tot_usd = f"USD ${tot_fact_est_usd:,.2f}"
                     str_tot_clp = f"CLP ${tot_fact_est_clp:,.0f}".replace(",", ".")
                     
+                    st.markdown("#### 🌟 Resumen Global del Mes")
                     c_met1, c_met2 = st.columns(2)
-                    c_met1.metric("Total Pronosticado (USD)", str_tot_usd)
-                    c_met2.metric("Total Pronosticado (CLP)", str_tot_clp)
+                    c_met1.metric("Total Pronosticado Global (USD)", str_tot_usd)
+                    c_met2.metric("Total Pronosticado Global (CLP)", str_tot_clp)
+                    st.divider()
                     
-                    df_show_hitos = df_hitos_mes[['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
-                    df_show_hitos['porcentaje'] = df_show_hitos['porcentaje'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) and isinstance(x, (int, float)) else x)
-                    
-                    texto_total = f"{str_tot_usd}   /   {str_tot_clp}"
-                    total_row = pd.DataFrame([{
-                        'id': '', 'id_nv': 'TOTALES', 'cliente': '', 'moneda': 'USD / CLP', 
-                        'porcentaje': '', 'monto': texto_total, 'estado': ''
-                    }])
-                    df_show_hitos = pd.concat([df_show_hitos, total_row], ignore_index=True)
-                    
-                    def format_monto(val, mon, id_val):
-                        if pd.isna(val) or val == '': return ''
-                        if isinstance(val, str) and ('/' in val or 'USD' in val or 'CLP' in val): 
-                            return val 
-                        try:
-                            v = float(val)
-                        except Exception:
-                            return val
-                        if mon == 'USD': return f"USD ${v:,.2f}"
-                        return f"CLP ${v:,.0f}".replace(",", ".")
+                    def mostrar_tabla_servicio(df_sub, titulo):
+                        if df_sub.empty:
+                            return
+                        st.markdown(f"#### {titulo}")
                         
-                    df_show_hitos['Monto Parcial'] = df_show_hitos.apply(lambda x: format_monto(x['monto'], x['moneda'], x['id']), axis=1)
-                    df_show_hitos.drop(columns=['monto'], inplace=True)
-                    df_show_hitos.rename(columns={'id_nv':'NV', 'cliente':'Cliente', 'moneda':'Moneda', 'porcentaje':'% Calculado', 'estado':'Estado Factura'}, inplace=True)
-                    
-                    def style_total_row(row):
-                        if row['NV'] == 'TOTALES':
-                            return ['background-color: #003366; color: white; font-weight: bold'] * len(row)
-                        elif 'Auto' in str(row['Estado Factura']):
-                            return ['background-color: #E8F8F5; font-style: italic'] * len(row)
-                        return [''] * len(row)
+                        sub_tot_usd = df_sub['monto_usd'].sum()
+                        sub_tot_clp = sub_tot_usd * tasa_cambio
+                        s_tot_usd = f"USD ${sub_tot_usd:,.2f}"
+                        s_tot_clp = f"CLP ${sub_tot_clp:,.0f}".replace(",", ".")
                         
-                    st.dataframe(df_show_hitos.style.apply(style_total_row, axis=1), use_container_width=True, hide_index=True)
+                        df_show = df_sub[['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
+                        df_show['porcentaje'] = df_show['porcentaje'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) and isinstance(x, (int, float)) else x)
+                        
+                        texto_total = f"{s_tot_usd}   /   {s_tot_clp}"
+                        total_row = pd.DataFrame([{
+                            'id': '', 'id_nv': 'TOTALES', 'cliente': '', 'moneda': 'USD / CLP', 
+                            'porcentaje': '', 'monto': texto_total, 'estado': ''
+                        }])
+                        df_show = pd.concat([df_show, total_row], ignore_index=True)
+                        
+                        def format_monto(val, mon, id_val):
+                            if pd.isna(val) or val == '': return ''
+                            if isinstance(val, str) and ('/' in val or 'USD' in val or 'CLP' in val): 
+                                return val 
+                            try:
+                                v = float(val)
+                            except Exception:
+                                return val
+                            if mon == 'USD': return f"USD ${v:,.2f}"
+                            return f"CLP ${v:,.0f}".replace(",", ".")
+                            
+                        df_show['Monto Parcial'] = df_show.apply(lambda x: format_monto(x['monto'], x['moneda'], x['id']), axis=1)
+                        df_show.drop(columns=['monto'], inplace=True)
+                        df_show.rename(columns={'id_nv':'NV', 'cliente':'Cliente', 'moneda':'Moneda', 'porcentaje':'% Calculado', 'estado':'Estado Factura'}, inplace=True)
+                        
+                        def style_total_row(row):
+                            if row['NV'] == 'TOTALES':
+                                return ['background-color: #003366; color: white; font-weight: bold'] * len(row)
+                            elif 'Auto' in str(row['Estado Factura']):
+                                return ['background-color: #E8F8F5; font-style: italic'] * len(row)
+                            return [''] * len(row)
+                            
+                        st.dataframe(df_show.style.apply(style_total_row, axis=1), use_container_width=True, hide_index=True)
+
+                    df_ssee = df_hitos_mes[df_hitos_mes['tipo_servicio'] == 'SSEE']
+                    df_terreno = df_hitos_mes[df_hitos_mes['tipo_servicio'] == 'SE TERRENO']
+                    
+                    mostrar_tabla_servicio(df_ssee, "🔹 Facturación SSEE (Subestaciones)")
+                    mostrar_tabla_servicio(df_terreno, "🔸 Facturación SE TERRENO (Faenas)")
                     
                     with st.expander("🔄 Actualizar Estado de una Factura del mes"):
                         hitos_reales = df_hitos_mes[df_hitos_mes['id'].astype(str).str.isnumeric()]
