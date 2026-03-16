@@ -459,29 +459,74 @@ def main_app():
                             st.warning("⚠️ Debe ingresar un ID y Cliente válidos.")
         
         with col_admin:
-            st.subheader("Administración")
-            st.info("Utilice esta opción para eliminar un proyecto completo del sistema. Esto borrará irreversiblemente la Nota de Venta, todas sus asignaciones, horas y gastos asociados.")
+            st.subheader("Administración y Edición")
             
-            nvs_para_borrar = obtener_nvs()
-            if nvs_para_borrar:
-                opciones_borrar = {f"{n['id_nv']} - {n['cliente']}": n['id_nv'] for n in nvs_para_borrar}
-                nv_a_borrar_label = st.selectbox("Seleccione Proyecto a Eliminar", list(opciones_borrar.keys()))
+            nvs_admin = obtener_nvs()
+            if nvs_admin:
+                opciones_admin = {f"{n['id_nv']} - {n['cliente']}": n for n in nvs_admin}
                 
-                confirmacion_borrado = st.checkbox(f"Estoy seguro que deseo eliminar {nv_a_borrar_label}")
+                tab_edit, tab_del = st.tabs(["✏️ Editar", "🗑️ Eliminar"])
                 
-                if st.button("🗑️ Eliminar Proyecto Definitivamente", type="secondary"):
-                    if confirmacion_borrado:
-                        try:
-                            id_a_borrar = opciones_borrar[nv_a_borrar_label]
-                            supabase.table("notas_venta").delete().eq("id_nv", id_a_borrar).execute()
-                            st.success(f"✅ Proyecto {id_a_borrar} eliminado del sistema.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al intentar eliminar el proyecto: {e}")
-                    else:
-                        st.warning("Debe confirmar marcando la casilla antes de eliminar.")
+                with tab_edit:
+                    st.info("Modifique los datos de un proyecto existente.")
+                    nv_a_editar_label = st.selectbox("Seleccione Proyecto a Editar", list(opciones_admin.keys()), key="sel_edit_nv")
+                    nv_data = opciones_admin[nv_a_editar_label]
+                    
+                    with st.form("form_edit_nv"):
+                        st.text_input("ID Nota de Venta (No editable)", value=nv_data['id_nv'], disabled=True, help="El ID es el identificador principal y no se puede modificar. Si necesita cambiarlo, elimine el registro y créelo nuevamente.")
+                        new_cliente = st.text_input("Cliente", value=nv_data['cliente'])
+                        new_tipo = st.selectbox("Tipo de Servicio", ["SSEE", "SE TERRENO"], index=0 if nv_data['tipo_servicio'] == 'SSEE' else 1)
+                        new_lugar = st.text_input("Lugar / Faena", value=nv_data.get('lugar', ''))
+                        
+                        c_mon_e, c_mnt_e = st.columns([1, 2])
+                        new_moneda = c_mon_e.selectbox("Moneda", ["CLP", "USD"], index=0 if nv_data.get('moneda', 'CLP') == 'CLP' else 1)
+                        
+                        if new_moneda == "CLP":
+                            monto_actual_str = f"{int(nv_data.get('monto_vendido', 0))}" 
+                            new_monto_str = c_mnt_e.text_input("Monto Ofertado", value=monto_actual_str, help="Puede usar puntos para miles.")
+                        else:
+                            monto_actual_flt = float(nv_data.get('monto_vendido', 0.0))
+                            new_monto_usd = c_mnt_e.number_input("Monto Ofertado", min_value=0.0, step=0.01, value=monto_actual_flt, format="%.2f")
+
+                        if st.form_submit_button("Actualizar Proyecto", use_container_width=True):
+                            if new_moneda == "CLP":
+                                m_clean = str(new_monto_str).replace(".", "").replace(",", "").strip()
+                                final_monto = float(m_clean) if m_clean.isdigit() else 0.0
+                            else:
+                                final_monto = new_monto_usd
+                                
+                            try:
+                                supabase.table("notas_venta").update({
+                                    "cliente": new_cliente,
+                                    "tipo_servicio": new_tipo,
+                                    "lugar": new_lugar,
+                                    "moneda": new_moneda,
+                                    "monto_vendido": final_monto
+                                }).eq("id_nv", nv_data['id_nv']).execute()
+                                st.success(f"✅ Proyecto {nv_data['id_nv']} actualizado exitosamente.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al actualizar: {e}")
+                                
+                with tab_del:
+                    st.info("Elimine irreversiblemente un proyecto y todos sus datos asociados.")
+                    nv_a_borrar_label = st.selectbox("Seleccione Proyecto a Eliminar", list(opciones_admin.keys()), key="sel_del_nv")
+                    id_a_borrar = opciones_admin[nv_a_borrar_label]['id_nv']
+                    
+                    confirmacion_borrado = st.checkbox(f"Estoy seguro que deseo eliminar {nv_a_borrar_label}")
+                    
+                    if st.button("🗑️ Eliminar Proyecto Definitivamente", type="secondary"):
+                        if confirmacion_borrado:
+                            try:
+                                supabase.table("notas_venta").delete().eq("id_nv", id_a_borrar).execute()
+                                st.success(f"✅ Proyecto {id_a_borrar} eliminado del sistema.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al intentar eliminar el proyecto: {e}")
+                        else:
+                            st.warning("Debe confirmar marcando la casilla antes de eliminar.")
             else:
-                st.write("No hay proyectos registrados para eliminar.")
+                st.write("No hay proyectos registrados.")
 
     # ==========================================
     # MÓDULO 2: MATRIZ DE PROYECCIÓN
