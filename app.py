@@ -879,6 +879,9 @@ def main_app():
                                     
                                     nuevos_esps = col_e.multiselect("Asignar Especialistas", ESPECIALISTAS, default=default_esps)
                                     
+                                    # NUEVO: Modalidad de turno para faenas
+                                    modalidad_turno = col_e.radio("Modalidad de Trabajo", ["Simultáneo (Todos a la vez)", "Contra Turno (Rotativo, ej: 7x7)"], help="En Contra Turno, las horas reales se dividirán equitativamente entre los especialistas seleccionados.")
+                                    
                                     if st.form_submit_button("Guardar Programación / Avance", use_container_width=True):
                                         if is_atrasada and not just_val.strip():
                                             st.error("❌ OBLIGATORIO: Debe ingresar la justificación por el cual no se cumplió el tiempo programado.")
@@ -887,14 +890,23 @@ def main_app():
                                         else:
                                             try:
                                                 nuevos_dias_extras = existing_dias_extras
-                                                if dias_trabajo > dias_estimados:
-                                                    nuevos_dias_extras += (dias_trabajo - dias_estimados)
+                                                
+                                                # NUEVO: Evitar falsos días extras en la primera programación
+                                                if estado_programacion != "SIN_PROGRAMAR":
+                                                    if dias_trabajo > dias_estimados:
+                                                        nuevos_dias_extras += (dias_trabajo - dias_estimados)
                                                     
                                                 supabase.table("asignaciones_personal").delete().eq("id_nv", nv_id_sel).eq("actividad_ssee", act).execute()
                                                 
                                                 incluye_finde = True if "Extras" in extras else False
                                                 f_f = calcular_fecha_fin_dinamica(f_ini, dias_trabajo, incluye_finde)
-                                                hh_final = calcular_hh_ssee(f_ini, f_f, incluye_finde, horas_diarias=h_diarias_val)
+                                                hh_base = calcular_hh_ssee(f_ini, f_f, incluye_finde, horas_diarias=h_diarias_val)
+                                                
+                                                # NUEVO: Ajuste por Contra Turno
+                                                if modalidad_turno == "Contra Turno (Rotativo, ej: 7x7)" and len(nuevos_esps) > 1:
+                                                    hh_por_persona = hh_base / len(nuevos_esps)
+                                                else:
+                                                    hh_por_persona = hh_base
                                                 
                                                 if not nuevos_esps:
                                                     payload = {
@@ -920,7 +932,7 @@ def main_app():
                                                             "especialista": esp, 
                                                             "fecha_inicio": str(f_ini), 
                                                             "fecha_fin": str(f_f), 
-                                                            "hh_asignadas": hh_final, 
+                                                            "hh_asignadas": hh_por_persona, 
                                                             "actividad_ssee": act, 
                                                             "comentarios": "EXTRAS" if incluye_finde else "LIBRES", 
                                                             "progreso": nuevo_p,
@@ -1037,7 +1049,6 @@ def main_app():
                         
                 df_plot = pd.DataFrame(expanded_rows)
 
-                # --- LÓGICA DE VENTANA DE TIEMPO Y PROTECCIÓN DE RENDIMIENTO ---
                 ts_inici = pd.to_datetime(data_inici_gantt)
                 if finestra_temps == "1 Semana":
                     ts_fi = ts_inici + pd.Timedelta(days=7)
@@ -1045,13 +1056,12 @@ def main_app():
                     ts_fi = ts_inici + pd.Timedelta(days=15)
                 elif finestra_temps == "1 Mes":
                     ts_fi = ts_inici + pd.Timedelta(days=30)
-                else: # Todo el proyecto
+                else: 
                     min_ts = df_plot['start_ts'].min() if not df_plot.empty else ts_inici
                     max_ts = df_plot['end_ts'].max() if not df_plot.empty else ts_inici + pd.Timedelta(days=30)
                     ts_inici = min_ts
                     ts_fi = max_ts
 
-                # Filtrar para no saturar Plotly
                 if not df_plot.empty:
                     df_plot = df_plot[(df_plot['end_ts'] >= ts_inici) & (df_plot['start_ts'] <= ts_fi)]
 
@@ -1083,11 +1093,9 @@ def main_app():
                         automargin=True
                     )
                     
-                    # --- DIBUJO DE FONDOS (FERIADOS/FIN DE SEMANA) CON LÍMITE DE SEGURIDAD ---
                     curr = ts_inici.replace(hour=0, minute=0, second=0, microsecond=0)
                     end_limit = ts_fi.replace(hour=0, minute=0, second=0, microsecond=0)
                     
-                    # Límite máximo estricto de 90 días para evitar que el navegador colapse
                     if (end_limit - curr).days > 90:
                         end_limit = curr + pd.Timedelta(days=90)
                         st.warning("⚠️ El rango del proyecto es muy amplio. Se muestran máximo 90 días en pantalla para evitar bloqueos. Use los filtros de '1 Mes' o '15 Días' para explorar con mayor detalle.")
@@ -1147,7 +1155,7 @@ def main_app():
                     
                     html_string = fig.to_html(include_plotlyjs='cdn')
                     b64 = base64.b64encode(html_string.encode('utf-8')).decode()
-                    href = f'<a href="data:text/html;base64,{b64}" download="Cronograma_Gantt_FPS.html" style="display: inline-block; padding: 0.5em 1em; background-color: #003366; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">📥 Descargar Gantt Interactivo (HTML)</a>'
+                    href = f'<a href="data:text/html;base64,{b64}" download="Cronograma_Gantt_FPS.html" style="display: inline-block; padding: 0.5em 1em; background-color: #003366; color: white; text-decoration: none; border-radius: 5px; font-weight: margin-top: 10px;">📥 Descargar Gantt Interactivo (HTML)</a>'
                     st.markdown(href, unsafe_allow_html=True)
 
             else:
@@ -1393,7 +1401,18 @@ def main_app():
                     d_p = row_nv['dias_proyectados']
                     d_e = row_nv['dias_ejecutados']
                     hh_e = row_nv['hh_asignadas']
-                    hh_p = d_p * 9.0  
+                    
+                    # NUEVA LÓGICA PARA HORAS PLANIFICADAS
+                    horas_diarias_plan = 9.0
+                    if asig_all_raw:
+                        df_proy_nv = pd.DataFrame(asig_all_raw)
+                        df_proy_nv = df_proy_nv[(df_proy_nv['id_nv'] == row_nv['id_nv']) & (df_proy_nv['actividad_ssee'] == 'PROYECCION_GLOBAL')]
+                        if not df_proy_nv.empty and 'horas_diarias' in df_proy_nv.columns:
+                            hd_val = float(df_proy_nv['horas_diarias'].max())
+                            if hd_val > 0:
+                                horas_diarias_plan = hd_val
+
+                    hh_p = d_p * horas_diarias_plan
                     estado_nv = row_nv['estado']
                     
                     fmt_v = f"{mon} ${m_v:,.0f}".replace(",", ".") if mon == 'CLP' else f"{mon} ${m_v:,.2f}"
