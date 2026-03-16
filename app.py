@@ -1288,8 +1288,6 @@ def main_app():
                 fecha_inicio_mes = datetime(anio_sel, mes_num, 1).date()
                 fecha_fin_mes = datetime(anio_sel, mes_num, ultimo_dia).date()
                 
-                df_kpi_mes = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)].copy()
-                
                 dias_habiles_mes = 0
                 curr_d = fecha_inicio_mes
                 while curr_d <= fecha_fin_mes:
@@ -1314,7 +1312,6 @@ def main_app():
                 
                 capacidad_neta_mes = int(capacidad_total_teorica - dias_ausencia_mes)
                 
-                # --- LÓGICA DE DÍAS-HOMBRE EN LUGAR DE HH ---
                 total_dias_proyectados = 0.0
                 total_dias_ejecutados = 0.0
                 
@@ -1497,13 +1494,13 @@ def main_app():
                     
                     with cg1:
                         df_dias_comp = pd.DataFrame({
-                            "Concepto": ["Días Vendidos (Plan)", "Días Reales (Ejecutados)"],
+                            "Concepto": ["Días Vendidos (Plan)", "Días Reales (Ejecutadas)"],
                             "Días": [d_p, d_e]
                         })
                         color_real = "#E74C3C" if d_e > d_p else "#2ECC71"
                         fig_bar_d = px.bar(
                             df_dias_comp, x="Concepto", y="Días", color="Concepto", text="Días",
-                            color_discrete_map={"Días Vendidos (Plan)": "#3498DB", "Días Reales (Ejecutados)": color_real},
+                            color_discrete_map={"Días Vendidos (Plan)": "#3498DB", "Días Reales (Ejecutadas)": color_real},
                             title="Balance de Días (Vendidos vs Reales)"
                         )
                         fig_bar_d.update_traces(texttemplate='%{text:.1f} Días', textposition='outside')
@@ -1662,7 +1659,10 @@ def main_app():
                 st.plotly_chart(fig_oc, use_container_width=True)
                 
                 st.markdown("**Tabla Detallada de Ocupación**")
-                st.dataframe(df_oc_sorted.style.background_gradient(subset=['% Ocupación Real'], cmap='Blues'), use_container_width=True, hide_index=True)
+                
+                # --- CORRECCIÓN: Evitar dependencia de Matplotlib para el fondo de color ---
+                df_oc_sorted['% Ocupación Real'] = df_oc_sorted['% Ocupación Real'].apply(lambda x: f"{x:.1f}%")
+                st.dataframe(df_oc_sorted, use_container_width=True, hide_index=True)
 
             # --- NUEVA PESTAÑA: TABLA GENERAL Y FACTURACIÓN POR PARCIALIDADES (HITOS) ---
             with tab_tabla:
