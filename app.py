@@ -845,7 +845,7 @@ def main_app():
                                 with st.form(key=f"form_update_{nv_id_sel}_{act}"):
                                     
                                     if is_atrasada:
-                                        st.error(f"⚠️ El tiempo límite programado ({curr_f_fin.strftime('%d/%m/%Y')}) ya se cumplió. Es obligatorio ingresar una justificación y añadir días extras para poder continuar.")
+                                        st.error(f"⚠️ El tiempo límite programado ({curr_f_fin.strftime('%d/%m/%Y')}) ya se cumplió. Es obligatorio ingresar una justificación para poder continuar.")
                                         just_val = st.text_input("Justificación del Atraso (Requerido):", value=existing_just)
                                     else:
                                         just_val = existing_just
@@ -855,7 +855,10 @@ def main_app():
                                     f_ini = col_f.date_input("Fecha Inicio", value=curr_f_ini, format="DD/MM/YYYY")
                                     
                                     col_d, col_e = st.columns(2)
-                                    dias_trabajo = col_d.number_input("Días de duración (Aumentar para reprogramar)", min_value=1, value=dias_estimados)
+                                    dias_trabajo = col_d.number_input("Días de duración total", min_value=1, value=dias_estimados)
+                                    
+                                    # --- CORRECCIÓN DE DÍAS EXTRAS (AHORA TOTALMENTE MANUAL Y EDITABLE) ---
+                                    dias_extra_manual = col_d.number_input("Días Extra (Atrasos)", min_value=0, value=existing_dias_extras, help="Corrija a 0 si el sistema sumó días por error en pruebas anteriores.")
                                     extras = col_d.radio("Fines de semana y Feriados", ["Libres (Descanso)", "Extras (Sáb/Dom/Feriado)"], index=1 if is_extras else 0)
                                     
                                     if nv_data_sel.get('tipo_servicio') == 'SE TERRENO':
@@ -879,30 +882,21 @@ def main_app():
                                     
                                     nuevos_esps = col_e.multiselect("Asignar Especialistas", ESPECIALISTAS, default=default_esps)
                                     
-                                    # NUEVO: Modalidad de turno para faenas
                                     modalidad_turno = col_e.radio("Modalidad de Trabajo", ["Simultáneo (Todos a la vez)", "Contra Turno (Rotativo, ej: 7x7)"], help="En Contra Turno, las horas reales se dividirán equitativamente entre los especialistas seleccionados.")
                                     
                                     if st.form_submit_button("Guardar Programación / Avance", use_container_width=True):
                                         if is_atrasada and not just_val.strip():
                                             st.error("❌ OBLIGATORIO: Debe ingresar la justificación por el cual no se cumplió el tiempo programado.")
                                         elif is_atrasada and dias_trabajo <= dias_estimados and nuevo_p < 100:
-                                            st.error("❌ OBLIGATORIO: Para quitar el estado de atraso debe aumentar la cantidad de 'Días de duración' o marcar el avance al 100%.")
+                                            st.error("❌ OBLIGATORIO: Para quitar el estado de atraso debe aumentar la cantidad de 'Días de duración total' o marcar el avance al 100%.")
                                         else:
                                             try:
-                                                nuevos_dias_extras = existing_dias_extras
-                                                
-                                                # NUEVO: Evitar falsos días extras en la primera programación
-                                                if estado_programacion != "SIN_PROGRAMAR":
-                                                    if dias_trabajo > dias_estimados:
-                                                        nuevos_dias_extras += (dias_trabajo - dias_estimados)
-                                                    
                                                 supabase.table("asignaciones_personal").delete().eq("id_nv", nv_id_sel).eq("actividad_ssee", act).execute()
                                                 
                                                 incluye_finde = True if "Extras" in extras else False
                                                 f_f = calcular_fecha_fin_dinamica(f_ini, dias_trabajo, incluye_finde)
                                                 hh_base = calcular_hh_ssee(f_ini, f_f, incluye_finde, horas_diarias=h_diarias_val)
                                                 
-                                                # NUEVO: Ajuste por Contra Turno
                                                 if modalidad_turno == "Contra Turno (Rotativo, ej: 7x7)" and len(nuevos_esps) > 1:
                                                     hh_por_persona = hh_base / len(nuevos_esps)
                                                 else:
@@ -918,7 +912,7 @@ def main_app():
                                                         "actividad_ssee": act, 
                                                         "comentarios": "EXTRAS" if incluye_finde else "LIBRES", 
                                                         "progreso": nuevo_p,
-                                                        "dias_extras": nuevos_dias_extras,
+                                                        "dias_extras": dias_extra_manual, # Usamos el valor manual explícito
                                                         "justificacion": just_val,
                                                         "hora_inicio_t": h_inicio_val.strftime('%H:%M') if h_inicio_val else '08:00',
                                                         "hora_fin_t": h_fin_val.strftime('%H:%M') if h_fin_val else '17:30',
@@ -936,7 +930,7 @@ def main_app():
                                                             "actividad_ssee": act, 
                                                             "comentarios": "EXTRAS" if incluye_finde else "LIBRES", 
                                                             "progreso": nuevo_p,
-                                                            "dias_extras": nuevos_dias_extras,
+                                                            "dias_extras": dias_extra_manual, # Usamos el valor manual explícito
                                                             "justificacion": just_val,
                                                             "hora_inicio_t": h_inicio_val.strftime('%H:%M') if h_inicio_val else '08:00',
                                                             "hora_fin_t": h_fin_val.strftime('%H:%M') if h_fin_val else '17:30',
@@ -1442,10 +1436,12 @@ def main_app():
 
                     st.markdown("---")
                     
+                    # --- CORRECCIÓN DEL DOBLE CONTEO DE DÍAS EXTRAS ---
                     has_extras = 'dias_extras' in df_hh_raw.columns
                     if has_extras and not df_hh_raw.empty:
                         df_tot_extras = df_hh_raw[df_hh_raw['id_nv'] == row_nv['id_nv']]
-                        total_dias_retraso = int(pd.to_numeric(df_tot_extras['dias_extras'], errors='coerce').sum())
+                        # Agrupamos por actividad para no multiplicar los días por la cantidad de técnicos
+                        total_dias_retraso = int(pd.to_numeric(df_tot_extras.groupby('actividad_ssee')['dias_extras'].max(), errors='coerce').sum())
                         if total_dias_retraso > 0:
                             st.warning(f"🚨 **Atención:** Las actividades de este proyecto acumulan un total de **{total_dias_retraso} días extras** sobre lo planificado debido a atrasos.")
                     
