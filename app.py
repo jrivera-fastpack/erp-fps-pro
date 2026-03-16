@@ -1124,9 +1124,8 @@ def main_app():
                     
                     fig.update_xaxes(
                         range=[ts_inici.strftime("%Y-%m-%d 00:00:00"), ts_fi.strftime("%Y-%m-%d 23:59:59")],
-                        dtick=3600000 * 2,
-                        tickformat="%H:%M\n%d/%m", 
-                        title="Horario Operativo", 
+                        tickformat="%d/%m/%Y", 
+                        title="Fecha Operativa", 
                         tickfont=dict(size=12, color='#666'), 
                         gridcolor='rgba(0,0,0,0.05)', 
                         showline=True, linewidth=1, linecolor='rgba(0,0,0,0.2)',
@@ -1539,6 +1538,7 @@ def main_app():
                 df_all_valid_asig = pd.DataFrame()
                 if asig_all_raw:
                     df_temp_asig = pd.DataFrame(asig_all_raw)
+                    # Incluimos PROYECCION_GLOBAL para detectar fechas recién creadas en Comercial
                     df_all_valid_asig = df_temp_asig[(df_temp_asig['id_nv'] != 'AUSENCIA') & (df_temp_asig['comentarios'] != 'SIN_PROGRAMAR')]
 
                 if not df_all_valid_asig.empty:
