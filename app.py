@@ -78,13 +78,23 @@ except Exception:
     st.error("Error crítico: No se pudo conectar a la base de datos Supabase. Verifique secrets.toml o la configuración en Streamlit Cloud.")
     st.stop()
 
-# --- INICIALIZACIÓN DE PROYECTO INTERNO DE RRHH ---
+# --- INICIALIZACIÓN DE PROYECTOS INTERNOS (RRHH Y OPERACIONES) ---
 try:
+    # Proyecto Ausencias
     aus_nv = supabase.table("notas_venta").select("id_nv").eq("id_nv", "AUSENCIA").execute()
     if not aus_nv.data:
         supabase.table("notas_venta").insert({
             "id_nv": "AUSENCIA", "cliente": "Gestión Interna (RRHH)", "tipo_servicio": "SE TERRENO", 
             "lugar": "Oficina/Casa", "moneda": "CLP", "monto_vendido": 0.0, 
+            "hh_vendidas": 0.0, "estado": "Abierta"
+        }).execute()
+        
+    # Proyecto Administrativo/Interno
+    int_nv = supabase.table("notas_venta").select("id_nv").eq("id_nv", "INTERNO").execute()
+    if not int_nv.data:
+        supabase.table("notas_venta").insert({
+            "id_nv": "INTERNO", "cliente": "Gestión Interna (Operaciones)", "tipo_servicio": "SE TERRENO", 
+            "lugar": "Oficina/Nave FPS", "moneda": "CLP", "monto_vendido": 0.0, 
             "hh_vendidas": 0.0, "estado": "Abierta"
         }).execute()
 except Exception:
@@ -186,7 +196,8 @@ def calcular_hh_ssee(f_ini, f_fin, incluye_finde=False, horas_diarias=None):
     return hh
 
 def obtener_nvs(estado_filter=None):
-    query = supabase.table("notas_venta").select("*").neq("id_nv", "AUSENCIA")
+    # Excluir explícitamente AUSENCIA e INTERNO
+    query = supabase.table("notas_venta").select("*").neq("id_nv", "AUSENCIA").neq("id_nv", "INTERNO")
     if estado_filter: query = query.eq("estado", estado_filter)
     return query.execute().data
 
@@ -684,6 +695,22 @@ def main_app():
                             etiqueta = f"🌴 {a['actividad_ssee']}"
                             matriz_final.at[a['especialista'], col] = etiqueta
                 
+                elif a['id_nv'] == 'INTERNO':
+                    for i in range((f_f - f_i).days + 1):
+                        d = f_i + timedelta(days=i)
+                        es_feriado = d.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
+                        es_finde = d.weekday() >= 5
+                        if not (es_finde or es_feriado):
+                            if d in fechas_rango:
+                                col = d.strftime("%d-%m-%Y")
+                                valor_actual = str(matriz_final.at[a['especialista'], col])
+                                if '🌴' not in valor_actual:
+                                    etiqueta = f"🏢 {a['actividad_ssee']}"
+                                    if valor_actual in ["🟢 Disponible", "⌛ No Hábil"]: 
+                                        matriz_final.at[a['especialista'], col] = etiqueta
+                                    elif etiqueta not in valor_actual: 
+                                        matriz_final.at[a['especialista'], col] += f" + {etiqueta}"
+                
                 elif a.get('actividad_ssee') == 'PROYECCION_GLOBAL':
                     trabajo_continuo = (a.get('comentarios') == 'EXTRAS')
                     cliente_nombre = mapa_clientes.get(a['id_nv'], 'Proyectado')
@@ -713,6 +740,7 @@ def main_app():
             texto = str(x)
             if 'No Hábil' in texto: return 'background-color: #F0F0F0; color: #A0A0A0'
             if '🌴' in texto: return 'background-color: #FADBD8; color: #C0392B; font-weight: bold'
+            if '🏢' in texto: return 'background-color: #D6EAF8; color: #21618C; font-weight: bold'
             if 'Disponible' in texto: return 'background-color: #E6F2FF; color: #003366'
             return 'background-color: #D5F5E3; color: #196F3D; font-weight: bold'
             
@@ -945,7 +973,79 @@ def main_app():
                         st.info("Utilice el panel de la izquierda para definir las actividades del alcance de este proyecto.")
 
         st.divider()
-        st.subheader("3. Cronograma Operativo (Gantt)")
+        st.subheader("3. Trabajos Internos y Administrativos")
+        st.info("Utilice este panel para asignar labores que no pertenecen a un proyecto comercial (ej: informes, capacitaciones, trabajos en taller o nave).")
+        
+        c_int1, c_int2 = st.columns(2)
+        with c_int1:
+            with st.expander("🏢 Asignar Nueva Labor Interna", expanded=False):
+                with st.form("form_internas"):
+                    esp_int = st.multiselect("Especialista(s)", ESPECIALISTAS, key="int_esp")
+                    tipo_int = st.selectbox("Tipo de Labor", [
+                        "Informe de Visita Técnica",
+                        "Trabajos en Nave FPS (Taller)",
+                        "Carga de Cilindros",
+                        "Cursos y Capacitación",
+                        "Trabajo Administrativo",
+                        "Otro"
+                    ])
+                    desc_int = st.text_input("Descripción adicional (Opcional)")
+                    
+                    c_d1, c_d2 = st.columns(2)
+                    f_ini_int = c_d1.date_input("Fecha Inicio", format="DD/MM/YYYY", key="int_ini")
+                    f_fin_int = c_d2.date_input("Fecha Fin", format="DD/MM/YYYY", key="int_fin")
+                    
+                    if st.form_submit_button("Guardar Labor Interna", use_container_width=True):
+                        if esp_int and f_ini_int <= f_fin_int:
+                            try:
+                                act_nombre = f"{tipo_int}" + (f" - {desc_int}" if desc_int else "")
+                                hh_final = calcular_hh_ssee(f_ini_int, f_fin_int, incluye_finde=False)
+                                for esp in esp_int:
+                                    p_asig = {
+                                        "id_nv": "INTERNO", 
+                                        "especialista": esp, 
+                                        "fecha_inicio": str(f_ini_int), 
+                                        "fecha_fin": str(f_fin_int), 
+                                        "hh_asignadas": hh_final, 
+                                        "actividad_ssee": act_nombre, 
+                                        "comentarios": "LIBRES", 
+                                        "progreso": 100,
+                                        "hora_inicio_t": "08:00",
+                                        "hora_fin_t": "17:30",
+                                        "horas_diarias": 9.5
+                                    }
+                                    safe_insert_asignacion(p_asig)
+                                st.success("✅ Labor interna registrada. Aparecerá en la Matriz y el Gantt.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al registrar labor: {e}")
+                        else:
+                            st.error("⚠️ Seleccione especialistas y asegúrese de que las fechas sean correctas.")
+                            
+        with c_int2:
+            with st.expander("🗑️ Gestionar Labores Internas activas", expanded=False):
+                internas_raw = supabase.table("asignaciones_personal").select("*").eq("id_nv", "INTERNO").execute().data
+                if internas_raw:
+                    df_int_borrar = pd.DataFrame(internas_raw)
+                    opciones_int_borrar = {}
+                    for _, row in df_int_borrar.iterrows():
+                        etiqueta = f"{row['especialista']} | {row['actividad_ssee']} | {row['fecha_inicio']}"
+                        opciones_int_borrar[etiqueta] = row['id']
+                        
+                    int_seleccionada = st.selectbox("Seleccione labor a eliminar", list(opciones_int_borrar.keys()))
+                    if st.button("🗑️ Eliminar Labor Interna"):
+                        try:
+                            id_int = opciones_int_borrar[int_seleccionada]
+                            supabase.table("asignaciones_personal").delete().eq("id", id_int).execute()
+                            st.success("✅ Labor eliminada exitosamente.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al eliminar: {e}")
+                else:
+                    st.write("No hay labores internas registradas en el sistema.")
+
+        st.divider()
+        st.subheader("4. Cronograma Operativo (Gantt)")
         
         c_v1, c_v2, c_v3 = st.columns(3)
         vista_gantt = c_v1.radio("Filtro de Vista:", ["🌍 General (Todos)", "🔍 Por Proyecto Seleccionado"], horizontal=True)
@@ -963,6 +1063,7 @@ def main_app():
             if not df_g.empty:
                 nvs_info = {n['id_nv']: n['cliente'] for n in obtener_nvs()}
                 nvs_info['AUSENCIA'] = 'Gestión Interna (RRHH)'
+                nvs_info['INTERNO'] = 'Gestión Interna (Operaciones)'
                 
                 df_g['cliente'] = df_g['id_nv'].map(nvs_info)
                 df_g['Labor'] = df_g['actividad_ssee'].fillna('Servicio Terreno')
@@ -1002,7 +1103,7 @@ def main_app():
                         new_row['Fin'] = "Por definir"
                         new_row['Etiqueta_Barra'] = "⚠️ SIN FECHA"
                         expanded_rows.append(new_row)
-                    elif row['comentarios'] == 'LIBRES':
+                    elif row['comentarios'] == 'LIBRES' or row['id_nv'] == 'INTERNO':
                         current_chunk_start = start
                         current_day = start.date()
                         end_day = end.date()
@@ -1200,7 +1301,7 @@ def main_app():
             if asig_all_raw:
                 df_all = pd.DataFrame(asig_all_raw)
                 df_ausencias = df_all[df_all['id_nv'] == 'AUSENCIA']
-                df_hh_raw = df_all[(df_all['id_nv'] != 'AUSENCIA') & (df_all['actividad_ssee'] != 'PROYECCION_GLOBAL') & (df_all['comentarios'] != 'SIN_PROGRAMAR')]
+                df_hh_raw = df_all[(df_all['id_nv'] != 'AUSENCIA') & (df_all['id_nv'] != 'INTERNO') & (df_all['actividad_ssee'] != 'PROYECCION_GLOBAL') & (df_all['comentarios'] != 'SIN_PROGRAMAR')]
                 
                 if not df_hh_raw.empty:
                     df_hh_raw['horas_diarias_calc'] = df_hh_raw['horas_diarias'].apply(lambda x: float(x) if float(x) > 0 else 9.0)
@@ -1317,7 +1418,7 @@ def main_app():
                 
                 if asig_all_raw:
                     for a in asig_all_raw:
-                        if a.get('id_nv') == 'AUSENCIA' or a.get('comentarios') == 'SIN_PROGRAMAR':
+                        if a.get('id_nv') == 'AUSENCIA' or a.get('id_nv') == 'INTERNO' or a.get('comentarios') == 'SIN_PROGRAMAR':
                             continue
                             
                         try:
@@ -1366,7 +1467,7 @@ def main_app():
                 total_dias_ejecutados = int(round(total_dias_ejecutados))
                 
                 if df_kpi_mes.empty and total_dias_ejecutados == 0 and total_dias_proyectados == 0:
-                    st.info(f"No hay proyectos registrados operando durante {mes_sel} de {anio_sel}.")
+                    st.info(f"No hay proyectos comerciales operando durante {mes_sel} de {anio_sel}.")
                 else:
                     df_kpi_mes['venta_usd'] = df_kpi_mes.apply(lambda row: row['monto_vendido'] if row['moneda'] == 'USD' else row['monto_vendido'] / tasa_cambio, axis=1)
                     total_venta_usd = df_kpi_mes['venta_usd'].sum()
@@ -1602,7 +1703,7 @@ def main_app():
                                 
                                 if a.get('id_nv') == 'AUSENCIA':
                                     estado_dia = "Ausente"
-                                    break # Ausencia pisa todo
+                                    break 
                                 elif a.get('comentarios') != 'SIN_PROGRAMAR':
                                     estado_dia = "Ocupado"
                         
@@ -1660,7 +1761,6 @@ def main_app():
                 
                 st.markdown("**Tabla Detallada de Ocupación**")
                 
-                # --- CORRECCIÓN: Evitar dependencia de Matplotlib para el fondo de color ---
                 df_oc_sorted['% Ocupación Real'] = df_oc_sorted['% Ocupación Real'].apply(lambda x: f"{x:.1f}%")
                 st.dataframe(df_oc_sorted, use_container_width=True, hide_index=True)
 
