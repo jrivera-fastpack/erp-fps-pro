@@ -382,7 +382,6 @@ def main_app():
                     if st.form_submit_button("Guardar Nota de Venta", use_container_width=True):
                         id_nv = f"{id_nv_base.strip()} - {item_nv.strip()}" if item_nv.strip() else id_nv_base.strip()
                         
-                        # Limpiar formato libre de CLP para guardarlo exacto matemáticamente
                         if moneda == "CLP":
                             m_clean = str(monto_str).replace(".", "").replace(",", "").strip()
                             monto = float(m_clean) if m_clean.isdigit() else 0.0
@@ -1497,26 +1496,37 @@ def main_app():
                         df_hitos_mes = pd.concat([df_hitos_mes, pd.DataFrame(nuevas_filas)], ignore_index=True)
 
                 if not df_hitos_mes.empty:
-                    tot_fact_est = df_hitos_mes['monto_usd'].sum()
-                    st.metric("Total Pronosticado a Facturar (USD Equivalente)", f"USD ${tot_fact_est:,.2f}")
+                    tot_fact_est_usd = df_hitos_mes['monto_usd'].sum()
+                    tot_fact_est_clp = tot_fact_est_usd * tasa_cambio
+                    
+                    str_tot_usd = f"USD ${tot_fact_est_usd:,.2f}"
+                    str_tot_clp = f"CLP ${tot_fact_est_clp:,.0f}".replace(",", ".")
+                    
+                    # MEJORA: Mostrar ambas monedas en las métricas de la tabla resumen
+                    c_met1, c_met2 = st.columns(2)
+                    c_met1.metric("Total Pronosticado (USD)", str_tot_usd)
+                    c_met2.metric("Total Pronosticado (CLP)", str_tot_clp)
                     
                     df_show_hitos = df_hitos_mes[['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
                     df_show_hitos['porcentaje'] = df_show_hitos['porcentaje'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) and isinstance(x, (int, float)) else x)
                     
+                    # AÑADIR FILA DE TOTALES EN AMBAS MONEDAS
+                    texto_total = f"{str_tot_usd}   /   {str_tot_clp}"
                     total_row = pd.DataFrame([{
-                        'id': '', 'id_nv': 'TOTALES', 'cliente': '', 'moneda': 'USD (Equiv)', 
-                        'porcentaje': '', 'monto': tot_fact_est, 'estado': ''
+                        'id': '', 'id_nv': 'TOTALES', 'cliente': '', 'moneda': 'USD / CLP', 
+                        'porcentaje': '', 'monto': texto_total, 'estado': ''
                     }])
                     df_show_hitos = pd.concat([df_show_hitos, total_row], ignore_index=True)
                     
-                    # Formateo correcto de la tabla aplicando puntos para miles en CLP
+                    # Formateo correcto de la tabla aplicando puntos para miles
                     def format_monto(val, mon, id_val):
                         if pd.isna(val) or val == '': return ''
+                        if isinstance(val, str) and ('/' in val or 'USD' in val or 'CLP' in val): 
+                            return val # Es la fila de totales, la dejamos intacta
                         try:
                             v = float(val)
                         except Exception:
                             return val
-                        if id_val == '' and mon == 'USD (Equiv)': return f"USD ${v:,.2f}"
                         if mon == 'USD': return f"USD ${v:,.2f}"
                         return f"CLP ${v:,.0f}".replace(",", ".")
                         
@@ -1572,7 +1582,7 @@ def main_app():
                         m_tot_str = f"{moneda_h} ${monto_tot_h:,.0f}".replace(",", ".") if moneda_h == 'CLP' else f"{moneda_h} ${monto_tot_h:,.2f}"
                         m_res_str = f"{moneda_h} ${monto_restante:,.0f}".replace(",", ".") if moneda_h == 'CLP' else f"{moneda_h} ${monto_restante:,.2f}"
                         
-                        st.write(f"**Monto Total Proyecto:** {m_tot_str} | **Monto Restante por Asignar:** {m_res_str}")
+                        st.write(f"**Monto Total Proyecto:** {m_tot_str} | **Monto Restante:** {m_res_str}")
                         st.write(f"**Planificado:** {pct_planeado_real:.1f}% | **Por Planificar:** {pct_restante_real:.1f}%")
                         
                         if not df_hitos_nv.empty:
@@ -1590,41 +1600,88 @@ def main_app():
                             
                             st.dataframe(df_hnv_show, use_container_width=True, hide_index=True)
                             
-                            if st.button("🗑️ Borrar todos los hitos de esta NV"):
-                                try:
-                                    supabase.table("hitos_facturacion").delete().eq("id_nv", id_nv_h).execute()
-                                    st.success("Hitos eliminados. Puede volver a planificar.")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error("Error al eliminar hitos.")
+                            # --- NUEVO: GESTIÓN INDIVIDUAL DE HITOS ---
+                            st.markdown("**Opciones de Edición de Hitos:**")
+                            c_del1, c_del2 = st.columns(2)
+                            
+                            with c_del1:
+                                with st.form("form_del_individual"):
+                                    id_del = st.selectbox("Seleccione ID de Parcialidad a eliminar", df_hnv_show['ID'].tolist())
+                                    submit_del = st.form_submit_button("🗑️ Eliminar Solo Este Hito")
+                                    if submit_del:
+                                        try:
+                                            supabase.table("hitos_facturacion").delete().eq("id", id_del).execute()
+                                            st.success(f"Hito {id_del} eliminado correctamente.")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Error al eliminar: {e}")
+                                            
+                            with c_del2:
+                                st.write("") # Espaciado visual
+                                st.write("") # Espaciado visual
+                                if st.button("🗑️ Borrar TODOS los hitos de esta NV", type="secondary", use_container_width=True):
+                                    try:
+                                        supabase.table("hitos_facturacion").delete().eq("id_nv", id_nv_h).execute()
+                                        st.success("Todos los hitos eliminados. Puede volver a planificar.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error("Error al eliminar hitos.")
                             
                         if round(monto_restante, 2) > 0:
+                            st.divider()
                             st.markdown(f"**Añadir nueva parcialidad sobre el saldo restante ({m_res_str}):**")
+                            
+                            # --- NUEVO: MODO DE INGRESO DUAL (PORCENTAJE O EXACTO) ---
+                            modo_ingreso = st.radio("Definir la parcialidad por:", ["Porcentaje del Saldo (%)", "Monto Exacto"], horizontal=True)
+                            
                             with st.form("form_add_hito"):
                                 c_hm, c_ha, c_hp = st.columns(3)
                                 h_mes = c_hm.selectbox("Mes de Facturación", list(MESES_ES.values()))
                                 h_anio = c_ha.selectbox("Año", lista_anios, index=lista_anios.index(año_actual))
-                                h_pct = c_hp.number_input("Porcentaje (%) DEL SALDO RESTANTE", min_value=0.1, max_value=100.0, step=1.0, value=100.0)
+                                
+                                if modo_ingreso == "Porcentaje del Saldo (%)":
+                                    h_val = c_hp.number_input("Porcentaje (%) a cobrar", min_value=0.1, max_value=100.0, step=1.0, value=100.0)
+                                else:
+                                    if moneda_h == 'CLP':
+                                        h_val = c_hp.text_input("Monto a cobrar (CLP)", value=f"{int(monto_restante)}", help="Puede usar puntos para miles.")
+                                    else:
+                                        h_val = c_hp.number_input("Monto a cobrar (USD)", min_value=0.01, max_value=float(monto_restante), step=100.0, value=float(monto_restante))
                                 
                                 if st.form_submit_button("Agregar Hito de Cobro", use_container_width=True):
                                     mes_n = list(MESES_ES.keys())[list(MESES_ES.values()).index(h_mes)]
                                     
-                                    monto_calc = (h_pct / 100.0) * monto_restante
-                                    pct_sobre_total = (monto_calc / monto_tot_h) * 100 if monto_tot_h > 0 else 0
+                                    # Procesar el valor ingresado según el modo
+                                    monto_calc = 0.0
+                                    if modo_ingreso == "Porcentaje del Saldo (%)":
+                                        monto_calc = (h_val / 100.0) * monto_restante
+                                    else:
+                                        if moneda_h == 'CLP':
+                                            m_clean = str(h_val).replace(".", "").replace(",", "").strip()
+                                            monto_calc = float(m_clean) if m_clean.isdigit() else 0.0
+                                        else:
+                                            monto_calc = float(h_val)
                                     
-                                    try:
-                                        supabase.table("hitos_facturacion").insert({
-                                            "id_nv": id_nv_h,
-                                            "mes": mes_n,
-                                            "anio": h_anio,
-                                            "porcentaje": pct_sobre_total,
-                                            "monto": monto_calc,
-                                            "estado": "Pendiente"
-                                        }).execute()
-                                        st.success("Hito de facturación agregado.")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"❌ Error: Asegúrese de ejecutar primero la actualización SQL de la base de datos.")
+                                    # Validación Estricta
+                                    if round(monto_calc, 2) > round(monto_restante, 2):
+                                        st.error(f"❌ El monto calculado ({monto_calc:,.2f}) supera el saldo restante permitido ({monto_restante:,.2f}).")
+                                    elif monto_calc <= 0:
+                                        st.error("❌ El monto debe ser mayor a 0.")
+                                    else:
+                                        pct_sobre_total = (monto_calc / monto_tot_h) * 100 if monto_tot_h > 0 else 0
+                                        
+                                        try:
+                                            supabase.table("hitos_facturacion").insert({
+                                                "id_nv": id_nv_h,
+                                                "mes": mes_n,
+                                                "anio": h_anio,
+                                                "porcentaje": pct_sobre_total,
+                                                "monto": monto_calc,
+                                                "estado": "Pendiente"
+                                            }).execute()
+                                            st.success("Hito de facturación agregado exitosamente.")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"❌ Error de BD: {e}")
                         else:
                             st.success("✅ El 100% de este proyecto ya ha sido planificado en hitos.")
 
@@ -1706,6 +1763,7 @@ def main_app():
                     pdf.cell(0, 15, "REPORTE EJECUTIVO DE CIERRE - COORDINACIÓN FPS", ln=True, align='C')
                     pdf.ln(5)
                     
+                    # Formateo correcto en PDF (puntos para CLP)
                     fmt_v_pdf = f"{info_nv['monto_vendido']:,.0f}".replace(",", ".") if moneda == 'CLP' else f"{info_nv['monto_vendido']:,.2f}"
                     fmt_g_pdf = f"{sum_gas_real:,.0f}".replace(",", ".") if moneda == 'CLP' else f"{sum_gas_real:,.2f}"
                     
