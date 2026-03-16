@@ -1389,6 +1389,8 @@ def main_app():
                 fecha_inicio_mes = datetime(anio_sel, mes_num, 1).date()
                 fecha_fin_mes = datetime(anio_sel, mes_num, ultimo_dia).date()
                 
+                df_kpi_mes = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)].copy()
+                
                 dias_habiles_mes = 0
                 curr_d = fecha_inicio_mes
                 while curr_d <= fecha_fin_mes:
