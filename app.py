@@ -940,20 +940,19 @@ def main_app():
                         st.info("Utilice el panel de la izquierda para definir las actividades del alcance de este proyecto.")
 
         st.divider()
-        st.subheader("3. Cronograma Operatiu (Gantt)")
+        st.subheader("3. Cronograma Operativo (Gantt)")
         
-        # --- NOUS FILTRES PER EVITAR SOBRECÀRREGA (CATALÀ) ---
         c_v1, c_v2, c_v3 = st.columns(3)
-        vista_gantt = c_v1.radio("Filtre de Vista:", ["🌍 General", "🔍 Per Projecte Seleccionat"], horizontal=True)
-        finestra_temps = c_v2.radio("⏳ Finestra de Temps:", ["Tot el Projecte", "1 Setmana", "15 Dies", "1 Mes"], horizontal=True, index=2)
-        data_inici_gantt = c_v3.date_input("📅 Data d'inici", value=datetime.today().date())
+        vista_gantt = c_v1.radio("Filtro de Vista:", ["🌍 General (Todos)", "🔍 Por Proyecto Seleccionado"], horizontal=True)
+        finestra_temps = c_v2.radio("⏳ Ventana de Tiempo:", ["Todo el Proyecto", "1 Semana", "15 Días", "1 Mes"], horizontal=True, index=2)
+        data_inici_gantt = c_v3.date_input("📅 Fecha de inicio", value=datetime.today().date())
 
         asig_gantt_raw = supabase.table("asignaciones_personal").select("*").execute().data
         if asig_gantt_raw:
             df_g = pd.DataFrame(asig_gantt_raw)
             df_g = df_g[df_g['actividad_ssee'] != 'PROYECCION_GLOBAL']
             
-            if vista_gantt == "🔍 Per Projecte Seleccionat":
+            if vista_gantt == "🔍 Por Proyecto Seleccionado":
                 df_g = df_g[df_g['id_nv'] == nv_id_sel]
             
             if not df_g.empty:
@@ -1038,24 +1037,26 @@ def main_app():
                         
                 df_plot = pd.DataFrame(expanded_rows)
 
-                # --- LÒGICA PER LIMITAR LA FINESTRA DE TEMPS I EVITAR QUE ES PENGI ---
+                # --- LÓGICA DE VENTANA DE TIEMPO Y PROTECCIÓN DE RENDIMIENTO ---
                 ts_inici = pd.to_datetime(data_inici_gantt)
-                if finestra_temps == "1 Setmana":
+                if finestra_temps == "1 Semana":
                     ts_fi = ts_inici + pd.Timedelta(days=7)
-                elif finestra_temps == "15 Dies":
+                elif finestra_temps == "15 Días":
                     ts_fi = ts_inici + pd.Timedelta(days=15)
                 elif finestra_temps == "1 Mes":
                     ts_fi = ts_inici + pd.Timedelta(days=30)
-                else: # Tot el projecte
-                    ts_inici = df_plot['start_ts'].min() if not df_plot.empty else ts_inici
-                    ts_fi = df_plot['end_ts'].max() if not df_plot.empty else ts_inici + pd.Timedelta(days=30)
+                else: # Todo el proyecto
+                    min_ts = df_plot['start_ts'].min() if not df_plot.empty else ts_inici
+                    max_ts = df_plot['end_ts'].max() if not df_plot.empty else ts_inici + pd.Timedelta(days=30)
+                    ts_inici = min_ts
+                    ts_fi = max_ts
 
-                # Filtrar per millorar el rendiment de Plotly
+                # Filtrar para no saturar Plotly
                 if not df_plot.empty:
                     df_plot = df_plot[(df_plot['end_ts'] >= ts_inici) & (df_plot['start_ts'] <= ts_fi)]
 
                 if df_plot.empty:
-                    st.info("No hi ha activitats programades en la finestra de temps seleccionada.")
+                    st.info("No hay actividades programadas en la ventana de tiempo seleccionada.")
                 else:
                     colores_globo = ['#3498DB', '#E67E22', '#2ECC71', '#E74C3C', '#9B59B6', '#1ABC9C', '#F1C40F', '#7F8C8D']
 
@@ -1082,9 +1083,14 @@ def main_app():
                         automargin=True
                     )
                     
-                    # --- OPTIMITZACIÓ DEL BUCLE DE DIES PER EVITAR PENJADES ---
+                    # --- DIBUJO DE FONDOS (FERIADOS/FIN DE SEMANA) CON LÍMITE DE SEGURIDAD ---
                     curr = ts_inici.replace(hour=0, minute=0, second=0, microsecond=0)
                     end_limit = ts_fi.replace(hour=0, minute=0, second=0, microsecond=0)
+                    
+                    # Límite máximo estricto de 90 días para evitar que el navegador colapse
+                    if (end_limit - curr).days > 90:
+                        end_limit = curr + pd.Timedelta(days=90)
+                        st.warning("⚠️ El rango del proyecto es muy amplio. Se muestran máximo 90 días en pantalla para evitar bloqueos. Use los filtros de '1 Mes' o '15 Días' para explorar con mayor detalle.")
                     
                     while curr <= end_limit + pd.Timedelta(days=1):
                         str_curr = curr.strftime("%d-%m-%Y")
@@ -1092,7 +1098,7 @@ def main_app():
                         es_finde = curr.weekday() >= 5
                         
                         if es_finde or es_feriado:
-                            label_txt = "FESTIU" if es_feriado else "DISS / DIUM"
+                            label_txt = "FERIADO" if es_feriado else "SÁB / DOM"
                             color_fill = "#D5D8DC" if es_feriado else "#FADBD8"
                             color_line = "#ABB2B9" if es_feriado else "#E6B0AA"
                             color_font = "#566573" if es_feriado else "#C0392B"
@@ -1101,7 +1107,7 @@ def main_app():
                                 x0=curr.strftime("%Y-%m-%d 08:00:00"), 
                                 x1=(curr + timedelta(days=1)).strftime("%Y-%m-%d 17:30:00"),
                                 fillcolor=color_fill, opacity=0.4, 
-                                annotation_text=f"{label_txt} (DESCANS)", annotation_position="top left",
+                                annotation_text=f"{label_txt} (DESCANSO)", annotation_position="top left",
                                 annotation_font_color=color_font, annotation_font_size=10,
                                 layer="below", line_width=1.5, line_dash="dot", line_color=color_line
                             )
@@ -1120,7 +1126,7 @@ def main_app():
                         range=[ts_inici.strftime("%Y-%m-%d 00:00:00"), ts_fi.strftime("%Y-%m-%d 23:59:59")],
                         dtick=3600000 * 2,
                         tickformat="%H:%M\n%d/%m", 
-                        title="Horari Operatiu", 
+                        title="Horario Operativo", 
                         tickfont=dict(size=12, color='#666'), 
                         gridcolor='rgba(0,0,0,0.05)', 
                         showline=True, linewidth=1, linecolor='rgba(0,0,0,0.2)',
@@ -1142,11 +1148,11 @@ def main_app():
                     
                     html_string = fig.to_html(include_plotlyjs='cdn')
                     b64 = base64.b64encode(html_string.encode('utf-8')).decode()
-                    href = f'<a href="data:text/html;base64,{b64}" download="Cronograma_Gantt_FPS.html" style="display: inline-block; padding: 0.5em 1em; background-color: #003366; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">📥 Descarregar Gantt Interactiu (HTML)</a>'
+                    href = f'<a href="data:text/html;base64,{b64}" download="Cronograma_Gantt_FPS.html" style="display: inline-block; padding: 0.5em 1em; background-color: #003366; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">📥 Descargar Gantt Interactivo (HTML)</a>'
                     st.markdown(href, unsafe_allow_html=True)
 
             else:
-                st.info("Encara no hi ha activitats afegides a l'abast per la vista seleccionada.")
+                st.info("Aún no hay actividades agregadas al alcance para la vista seleccionada.")
 
     # ==========================================
     # MÓDULO 4: GASTOS Y KPIs (FACTURACIÓN POR HITOS Y BACKLOG)
