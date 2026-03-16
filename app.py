@@ -940,16 +940,20 @@ def main_app():
                         st.info("Utilice el panel de la izquierda para definir las actividades del alcance de este proyecto.")
 
         st.divider()
-        st.subheader("3. Cronograma Operativo")
+        st.subheader("3. Cronograma Operatiu (Gantt)")
         
-        vista_gantt = st.radio("Filtro de Vista del Cronograma:", ["🌍 General (Todos los proyectos activos)", "🔍 Por Proyecto Seleccionado"], horizontal=True)
+        # --- NOUS FILTRES PER EVITAR SOBRECÀRREGA (CATALÀ) ---
+        c_v1, c_v2, c_v3 = st.columns(3)
+        vista_gantt = c_v1.radio("Filtre de Vista:", ["🌍 General", "🔍 Per Projecte Seleccionat"], horizontal=True)
+        finestra_temps = c_v2.radio("⏳ Finestra de Temps:", ["Tot el Projecte", "1 Setmana", "15 Dies", "1 Mes"], horizontal=True, index=2)
+        data_inici_gantt = c_v3.date_input("📅 Data d'inici", value=datetime.today().date())
 
         asig_gantt_raw = supabase.table("asignaciones_personal").select("*").execute().data
         if asig_gantt_raw:
             df_g = pd.DataFrame(asig_gantt_raw)
             df_g = df_g[df_g['actividad_ssee'] != 'PROYECCION_GLOBAL']
             
-            if vista_gantt == "🔍 Por Proyecto Seleccionado":
+            if vista_gantt == "🔍 Per Projecte Seleccionat":
                 df_g = df_g[df_g['id_nv'] == nv_id_sel]
             
             if not df_g.empty:
@@ -1034,42 +1038,61 @@ def main_app():
                         
                 df_plot = pd.DataFrame(expanded_rows)
 
-                colores_globo = ['#3498DB', '#E67E22', '#2ECC71', '#E74C3C', '#9B59B6', '#1ABC9C', '#F1C40F', '#7F8C8D']
+                # --- LÒGICA PER LIMITAR LA FINESTRA DE TEMPS I EVITAR QUE ES PENGI ---
+                ts_inici = pd.to_datetime(data_inici_gantt)
+                if finestra_temps == "1 Setmana":
+                    ts_fi = ts_inici + pd.Timedelta(days=7)
+                elif finestra_temps == "15 Dies":
+                    ts_fi = ts_inici + pd.Timedelta(days=15)
+                elif finestra_temps == "1 Mes":
+                    ts_fi = ts_inici + pd.Timedelta(days=30)
+                else: # Tot el projecte
+                    ts_inici = df_plot['start_ts'].min() if not df_plot.empty else ts_inici
+                    ts_fi = df_plot['end_ts'].max() if not df_plot.empty else ts_inici + pd.Timedelta(days=30)
 
-                fig = px.timeline(
-                    df_plot, 
-                    x_start="start_ts", 
-                    x_end="end_ts", 
-                    y="Eje_Y", 
-                    color="Labor",
-                    text="Etiqueta_Barra",
-                    hover_data={"especialista": True, "progreso": True, "Inicio": True, "Fin": True, "start_ts": False, "end_ts": False},
-                    color_discrete_sequence=colores_globo
-                )
+                # Filtrar per millorar el rendiment de Plotly
+                if not df_plot.empty:
+                    df_plot = df_plot[(df_plot['end_ts'] >= ts_inici) & (df_plot['start_ts'] <= ts_fi)]
 
-                fig.update_traces(textposition='inside', insidetextanchor='middle', marker_line_width=0, opacity=0.95, width=0.55, textfont=dict(size=13, color='#333333'))
-                
-                fig.update_yaxes(
-                    autorange="reversed", 
-                    title="", 
-                    tickfont=dict(size=13, color='#333'), 
-                    gridcolor='rgba(0,0,0,0.05)', 
-                    categoryorder='array', 
-                    categoryarray=orden_eje_y,
-                    automargin=True
-                )
-                
-                min_date = df_plot['start_ts'].min()
-                max_date = df_plot['end_ts'].max()
-                if not pd.isnull(min_date):
-                    curr = min_date.replace(hour=0, minute=0, second=0, microsecond=0)
-                    while curr <= max_date + pd.Timedelta(days=2):
+                if df_plot.empty:
+                    st.info("No hi ha activitats programades en la finestra de temps seleccionada.")
+                else:
+                    colores_globo = ['#3498DB', '#E67E22', '#2ECC71', '#E74C3C', '#9B59B6', '#1ABC9C', '#F1C40F', '#7F8C8D']
+
+                    fig = px.timeline(
+                        df_plot, 
+                        x_start="start_ts", 
+                        x_end="end_ts", 
+                        y="Eje_Y", 
+                        color="Labor",
+                        text="Etiqueta_Barra",
+                        hover_data={"especialista": True, "progreso": True, "Inicio": True, "Fin": True, "start_ts": False, "end_ts": False},
+                        color_discrete_sequence=colores_globo
+                    )
+
+                    fig.update_traces(textposition='inside', insidetextanchor='middle', marker_line_width=0, opacity=0.95, width=0.55, textfont=dict(size=13, color='#333333'))
+                    
+                    fig.update_yaxes(
+                        autorange="reversed", 
+                        title="", 
+                        tickfont=dict(size=13, color='#333'), 
+                        gridcolor='rgba(0,0,0,0.05)', 
+                        categoryorder='array', 
+                        categoryarray=orden_eje_y,
+                        automargin=True
+                    )
+                    
+                    # --- OPTIMITZACIÓ DEL BUCLE DE DIES PER EVITAR PENJADES ---
+                    curr = ts_inici.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_limit = ts_fi.replace(hour=0, minute=0, second=0, microsecond=0)
+                    
+                    while curr <= end_limit + pd.Timedelta(days=1):
                         str_curr = curr.strftime("%d-%m-%Y")
                         es_feriado = str_curr in FERIADOS_CHILE_2026
                         es_finde = curr.weekday() >= 5
                         
                         if es_finde or es_feriado:
-                            label_txt = "FERIADO" if es_feriado else "SÁB / DOM"
+                            label_txt = "FESTIU" if es_feriado else "DISS / DIUM"
                             color_fill = "#D5D8DC" if es_feriado else "#FADBD8"
                             color_line = "#ABB2B9" if es_feriado else "#E6B0AA"
                             color_font = "#566573" if es_feriado else "#C0392B"
@@ -1078,51 +1101,52 @@ def main_app():
                                 x0=curr.strftime("%Y-%m-%d 08:00:00"), 
                                 x1=(curr + timedelta(days=1)).strftime("%Y-%m-%d 17:30:00"),
                                 fillcolor=color_fill, opacity=0.4, 
-                                annotation_text=f"{label_txt} (DESCANSO)", annotation_position="top left",
+                                annotation_text=f"{label_txt} (DESCANS)", annotation_position="top left",
                                 annotation_font_color=color_font, annotation_font_size=10,
                                 layer="below", line_width=1.5, line_dash="dot", line_color=color_line
                             )
                         curr += timedelta(days=1)
-                
-                breaks = []
-                has_custom_hours = False
-                if 'hora_inicio_t' in df_g.columns:
-                    if (df_g['hora_i_str'] != '08:00').any() or (df_g['hora_f_str'] != '17:30').any():
-                        has_custom_hours = True
-                
-                if not has_custom_hours:
-                    breaks.append(dict(bounds=[17.5, 8], pattern="hour"))
-                
-                fig.update_xaxes(
-                    dtick=3600000 * 2,
-                    tickformat="%H:%M\n%d/%m", 
-                    title="Horario Operativo", 
-                    tickfont=dict(size=12, color='#666'), 
-                    gridcolor='rgba(0,0,0,0.05)', 
-                    showline=True, linewidth=1, linecolor='rgba(0,0,0,0.2)',
-                    rangebreaks=breaks,
-                    automargin=True
-                )
-                
-                altura_dinamica = max(400, len(orden_eje_y) * 80)
-                fig.update_layout(
-                    height=altura_dinamica, 
-                    margin=dict(l=250, r=30, t=60, b=80),
-                    plot_bgcolor='white', 
-                    paper_bgcolor='white', 
-                    legend_title_text='', 
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), 
-                    hoverlabel=dict(bgcolor="white", font_size=13, font_family="Arial")
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                
-                html_string = fig.to_html(include_plotlyjs='cdn')
-                b64 = base64.b64encode(html_string.encode('utf-8')).decode()
-                href = f'<a href="data:text/html;base64,{b64}" download="Cronograma_Gantt_FPS.html" style="display: inline-block; padding: 0.5em 1em; background-color: #003366; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">📥 Descargar Gantt Interactivo (HTML)</a>'
-                st.markdown(href, unsafe_allow_html=True)
+                    
+                    breaks = []
+                    has_custom_hours = False
+                    if 'hora_inicio_t' in df_g.columns:
+                        if (df_g['hora_i_str'] != '08:00').any() or (df_g['hora_f_str'] != '17:30').any():
+                            has_custom_hours = True
+                    
+                    if not has_custom_hours:
+                        breaks.append(dict(bounds=[17.5, 8], pattern="hour"))
+                    
+                    fig.update_xaxes(
+                        range=[ts_inici.strftime("%Y-%m-%d 00:00:00"), ts_fi.strftime("%Y-%m-%d 23:59:59")],
+                        dtick=3600000 * 2,
+                        tickformat="%H:%M\n%d/%m", 
+                        title="Horari Operatiu", 
+                        tickfont=dict(size=12, color='#666'), 
+                        gridcolor='rgba(0,0,0,0.05)', 
+                        showline=True, linewidth=1, linecolor='rgba(0,0,0,0.2)',
+                        rangebreaks=breaks,
+                        automargin=True
+                    )
+                    
+                    altura_dinamica = max(400, len(df_plot['Eje_Y'].unique()) * 80)
+                    fig.update_layout(
+                        height=altura_dinamica, 
+                        margin=dict(l=250, r=30, t=60, b=80),
+                        plot_bgcolor='white', 
+                        paper_bgcolor='white', 
+                        legend_title_text='', 
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), 
+                        hoverlabel=dict(bgcolor="white", font_size=13, font_family="Arial")
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    html_string = fig.to_html(include_plotlyjs='cdn')
+                    b64 = base64.b64encode(html_string.encode('utf-8')).decode()
+                    href = f'<a href="data:text/html;base64,{b64}" download="Cronograma_Gantt_FPS.html" style="display: inline-block; padding: 0.5em 1em; background-color: #003366; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">📥 Descarregar Gantt Interactiu (HTML)</a>'
+                    st.markdown(href, unsafe_allow_html=True)
 
             else:
-                st.info("Aún no hay actividades agregadas al alcance para la vista seleccionada.")
+                st.info("Encara no hi ha activitats afegides a l'abast per la vista seleccionada.")
 
     # ==========================================
     # MÓDULO 4: GASTOS Y KPIs (FACTURACIÓN POR HITOS Y BACKLOG)
