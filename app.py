@@ -352,7 +352,6 @@ def main_app():
                     col_mon, col_mnt = c3.columns([1, 2])
                     moneda = col_mon.selectbox("Moneda", ["CLP", "USD"])
                     
-                    # MEJORA: Evitar redondeo y permitir formato libre (14.538.342) en Pesos
                     if moneda == "CLP":
                         monto_str = col_mnt.text_input("Monto Ofertado (De este ítem)", value="", placeholder="Ej: 14.538.342")
                     else:
@@ -1502,7 +1501,6 @@ def main_app():
                     str_tot_usd = f"USD ${tot_fact_est_usd:,.2f}"
                     str_tot_clp = f"CLP ${tot_fact_est_clp:,.0f}".replace(",", ".")
                     
-                    # MEJORA: Mostrar ambas monedas en las métricas de la tabla resumen
                     c_met1, c_met2 = st.columns(2)
                     c_met1.metric("Total Pronosticado (USD)", str_tot_usd)
                     c_met2.metric("Total Pronosticado (CLP)", str_tot_clp)
@@ -1510,7 +1508,6 @@ def main_app():
                     df_show_hitos = df_hitos_mes[['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
                     df_show_hitos['porcentaje'] = df_show_hitos['porcentaje'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) and isinstance(x, (int, float)) else x)
                     
-                    # AÑADIR FILA DE TOTALES EN AMBAS MONEDAS
                     texto_total = f"{str_tot_usd}   /   {str_tot_clp}"
                     total_row = pd.DataFrame([{
                         'id': '', 'id_nv': 'TOTALES', 'cliente': '', 'moneda': 'USD / CLP', 
@@ -1518,11 +1515,10 @@ def main_app():
                     }])
                     df_show_hitos = pd.concat([df_show_hitos, total_row], ignore_index=True)
                     
-                    # Formateo correcto de la tabla aplicando puntos para miles
                     def format_monto(val, mon, id_val):
                         if pd.isna(val) or val == '': return ''
                         if isinstance(val, str) and ('/' in val or 'USD' in val or 'CLP' in val): 
-                            return val # Es la fila de totales, la dejamos intacta
+                            return val 
                         try:
                             v = float(val)
                         except Exception:
@@ -1590,7 +1586,6 @@ def main_app():
                             df_hnv_show['mes'] = df_hnv_show['mes'].apply(lambda x: MESES_ES.get(x, x))
                             df_hnv_show['porcentaje'] = df_hnv_show['porcentaje'].apply(lambda x: f"{x:.1f}% del Total")
                             
-                            # MEJORA: Formateo correcto del monto con puntos y signo peso en la tabla de hitos
                             if moneda_h == 'CLP':
                                 df_hnv_show['monto'] = df_hnv_show['monto'].apply(lambda x: f"CLP ${x:,.0f}".replace(",", "."))
                             else:
@@ -1600,7 +1595,6 @@ def main_app():
                             
                             st.dataframe(df_hnv_show, use_container_width=True, hide_index=True)
                             
-                            # --- NUEVO: GESTIÓN INDIVIDUAL DE HITOS ---
                             st.markdown("**Opciones de Edición de Hitos:**")
                             c_del1, c_del2 = st.columns(2)
                             
@@ -1617,8 +1611,8 @@ def main_app():
                                             st.error(f"Error al eliminar: {e}")
                                             
                             with c_del2:
-                                st.write("") # Espaciado visual
-                                st.write("") # Espaciado visual
+                                st.write("") 
+                                st.write("") 
                                 if st.button("🗑️ Borrar TODOS los hitos de esta NV", type="secondary", use_container_width=True):
                                     try:
                                         supabase.table("hitos_facturacion").delete().eq("id_nv", id_nv_h).execute()
@@ -1631,7 +1625,6 @@ def main_app():
                             st.divider()
                             st.markdown(f"**Añadir nueva parcialidad sobre el saldo restante ({m_res_str}):**")
                             
-                            # --- NUEVO: MODO DE INGRESO DUAL (PORCENTAJE O EXACTO) ---
                             modo_ingreso = st.radio("Definir la parcialidad por:", ["Porcentaje del Saldo (%)", "Monto Exacto"], horizontal=True)
                             
                             with st.form("form_add_hito"):
@@ -1650,7 +1643,6 @@ def main_app():
                                 if st.form_submit_button("Agregar Hito de Cobro", use_container_width=True):
                                     mes_n = list(MESES_ES.keys())[list(MESES_ES.values()).index(h_mes)]
                                     
-                                    # Procesar el valor ingresado según el modo
                                     monto_calc = 0.0
                                     if modo_ingreso == "Porcentaje del Saldo (%)":
                                         monto_calc = (h_val / 100.0) * monto_restante
@@ -1661,7 +1653,6 @@ def main_app():
                                         else:
                                             monto_calc = float(h_val)
                                     
-                                    # Validación Estricta
                                     if round(monto_calc, 2) > round(monto_restante, 2):
                                         st.error(f"❌ El monto calculado ({monto_calc:,.2f}) supera el saldo restante permitido ({monto_restante:,.2f}).")
                                     elif monto_calc <= 0:
@@ -1705,6 +1696,19 @@ def main_app():
                         'monto_pendiente': 'Saldo Pendiente', 'estado_facturacion': 'Estado General'
                     })
                     
+                    # --- NUEVO FORMATO PARA LOS MONTOS DEL BACKLOG ---
+                    def format_currency_backlog(val, mon):
+                        try:
+                            v = float(val)
+                        except Exception:
+                            return val
+                        if mon == 'USD':
+                            return f"USD ${v:,.2f}"
+                        return f"CLP ${v:,.0f}".replace(",", ".")
+                        
+                    df_pend_display['Monto Ofertado Original'] = df_pend_display.apply(lambda x: format_currency_backlog(x['Monto Ofertado Original'], x['Moneda']), axis=1)
+                    df_pend_display['Saldo Pendiente'] = df_pend_display.apply(lambda x: format_currency_backlog(x['Saldo Pendiente'], x['Moneda']), axis=1)
+
                     st.dataframe(df_pend_display, use_container_width=True, hide_index=True)
                 else:
                     st.success("✨ ¡Excelente! No hay servicios con saldo pendiente en tu Backlog.")
@@ -1763,7 +1767,6 @@ def main_app():
                     pdf.cell(0, 15, "REPORTE EJECUTIVO DE CIERRE - COORDINACIÓN FPS", ln=True, align='C')
                     pdf.ln(5)
                     
-                    # Formateo correcto en PDF (puntos para CLP)
                     fmt_v_pdf = f"{info_nv['monto_vendido']:,.0f}".replace(",", ".") if moneda == 'CLP' else f"{info_nv['monto_vendido']:,.2f}"
                     fmt_g_pdf = f"{sum_gas_real:,.0f}".replace(",", ".") if moneda == 'CLP' else f"{sum_gas_real:,.2f}"
                     
