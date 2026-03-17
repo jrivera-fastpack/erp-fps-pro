@@ -1214,17 +1214,15 @@ def main_app():
                         color_discrete_sequence=colores_globo
                     )
 
-                    # --- TEXTO EQUILIBRADO: LEGIBLE PERO SIN DESBORDARSE ---
+                    # --- TEXTO EQUILIBRADO: HORIZONTAL Y AUTO-AJUSTABLE ---
                     fig.update_traces(
-                        textposition='inside', 
+                        textposition='auto', 
                         insidetextanchor='middle', 
                         marker_line_width=0, 
                         opacity=0.95, 
                         width=0.75, 
-                        textfont_size=14, 
-                        textfont_color='#000000',
-                        insidetextfont=dict(size=14, color='#000000', family="Arial"),
-                        constraintext='none' 
+                        textangle=0, # Evita que el texto gire verticalmente bajo cualquier circunstancia
+                        textfont=dict(size=14, color='#000000', family="Arial")
                     )
                     
                     fig.update_yaxes(
@@ -1270,6 +1268,7 @@ def main_app():
                     fig.update_xaxes(
                         range=[ts_inici.strftime("%Y-%m-%d 00:00:00"), ts_fi.strftime("%Y-%m-%d 23:59:59")],
                         tickformat="%d/%m/%Y", 
+                        dtick=86400000, # Muestra un punto exacto por cada día
                         title="Fecha Operativa", 
                         tickfont=dict(size=12, color='#666'), 
                         gridcolor='rgba(0,0,0,0.05)', 
