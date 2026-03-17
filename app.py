@@ -836,19 +836,24 @@ def main_app():
                         hoy = datetime.today().date()
                         
                         for act in actividades_unicas:
-                            df_act = df_temp[df_temp['key_grupo'] == act]
-                            curr_prog = int(df_act['progreso'].max())
+                            # --- LÓGICA DE TRAZABILIDAD Y MÚLTIPLES SEGMENTOS ---
+                            df_act_raw = df_temp[df_temp['key_grupo'] == act].copy()
+                            df_act_raw['fecha_inicio_dt'] = pd.to_datetime(df_act_raw['fecha_inicio'])
                             
-                            existing_dias_extras = int(df_act['dias_extras'].max()) if 'dias_extras' in df_act.columns and pd.notna(df_act['dias_extras'].max()) else 0
+                            # Encontrar siempre el segmento más reciente para editar
+                            latest_start = df_act_raw['fecha_inicio_dt'].max()
+                            df_latest = df_act_raw[df_act_raw['fecha_inicio_dt'] == latest_start]
                             
-                            # --- LÓGICA DE PAUSA ---
-                            just_series = df_act['justificacion'].dropna() if 'justificacion' in df_act.columns else pd.Series()
+                            curr_prog = int(df_latest['progreso'].max())
+                            existing_dias_extras = int(df_latest['dias_extras'].max()) if 'dias_extras' in df_latest.columns and pd.notna(df_latest['dias_extras'].max()) else 0
+                            
+                            just_series = df_latest['justificacion'].dropna()
                             existing_just_raw = str(just_series.iloc[0]) if not just_series.empty else ""
                             is_paused = "[PAUSADA]" in existing_just_raw.upper()
-                            existing_just_display = existing_just_raw.replace("[PAUSADA] ", "").replace("[PAUSADA]", "").strip()
+                            existing_just_display = existing_just_raw.replace("[PAUSADA]", "").replace("[PAUSADA] ", "").strip()
                             
-                            esps_reales = [e for e in df_act['especialista'].unique() if e != 'Sin Asignar']
-                            estado_programacion = df_act['comentarios'].iloc[0] if not df_act.empty else ""
+                            esps_reales = [e for e in df_latest['especialista'].unique() if e != 'Sin Asignar']
+                            estado_programacion = df_latest['comentarios'].iloc[0] if not df_latest.empty else ""
                             
                             is_atrasada = False
                             
@@ -859,10 +864,10 @@ def main_app():
                                 is_extras = False
                                 estado_badge = "⚪ Sin Fecha"
                             else:
-                                curr_f_ini = pd.to_datetime(df_act['fecha_inicio'].min()).date()
-                                curr_f_fin = pd.to_datetime(df_act['fecha_fin'].max()).date()
+                                curr_f_ini = latest_start.date()
+                                curr_f_fin = pd.to_datetime(df_latest['fecha_fin'].max()).date()
                                 dias_estimados = max(1, (curr_f_fin - curr_f_ini).days + 1)
-                                is_extras = 'EXTRAS' in df_act['comentarios'].values
+                                is_extras = 'EXTRAS' in df_latest['comentarios'].values
                                 
                                 if is_paused:
                                     estado_badge = "⏸️ PAUSADA"
@@ -878,31 +883,40 @@ def main_app():
                                     
                                 with st.form(key=f"form_update_{nv_id_sel}_{act}"):
                                     
-                                    pausar_tarea = st.checkbox("⏸️ Pausar esta actividad (Para no generar alertas de atraso mientras está detenida)", value=is_paused)
+                                    pausar_tarea = st.checkbox("⏸️ Pausar esta actividad (Congela los días para no generar alertas de atraso)", value=is_paused)
+                                    is_resuming = is_paused and not pausar_tarea
                                     
-                                    if is_atrasada and not is_paused:
-                                        st.error(f"⚠️ El tiempo límite programado ({curr_f_fin.strftime('%d/%m/%Y')}) ya se cumplió. Es obligatorio ingresar una justificación.")
+                                    if is_resuming:
+                                        st.info("🔄 **Reanudando Tarea:** Se congelará el período pausado anterior en el historial y se creará un nuevo bloque de trabajo desde la nueva Fecha de Inicio.")
+                                        f_ini_default = hoy
+                                        dias_default = 1
+                                    else:
+                                        f_ini_default = curr_f_ini
+                                        dias_default = dias_estimados
+                                        
+                                    if is_atrasada and not pausar_tarea:
+                                        st.error(f"⚠️ El tiempo límite programado ({curr_f_fin.strftime('%d/%m/%Y')}) ya se cumplió. Es obligatorio justificar el atraso.")
                                         just_val = st.text_input("Justificación del Atraso (Requerido):", value=existing_just_display)
                                     else:
                                         just_val = st.text_input("Justificación o Comentario (Requerido si se pausa):", value=existing_just_display)
                                         
                                     col_p, col_f = st.columns([1, 1.5])
                                     nuevo_p = col_p.slider("Avance Específico %", 0, 100, curr_prog)
-                                    f_ini = col_f.date_input("Fecha Inicio", value=curr_f_ini, format="DD/MM/YYYY")
+                                    f_ini = col_f.date_input("Fecha Inicio", value=f_ini_default, format="DD/MM/YYYY")
                                     
                                     col_d, col_e = st.columns(2)
-                                    dias_trabajo = col_d.number_input("Días de duración total", min_value=1, value=dias_estimados)
+                                    dias_trabajo = col_d.number_input("Días de duración total", min_value=1, value=dias_default)
                                     
-                                    dias_extra_manual = col_d.number_input("Días Extra (Atrasos)", min_value=0, value=existing_dias_extras, help="Corrija a 0 si el sistema sumó días por error en pruebas anteriores.")
+                                    dias_extra_manual = col_d.number_input("Días Extra (Atrasos)", min_value=0, value=existing_dias_extras, help="Días de retraso acumulados. Corrija a 0 si hubo un error.")
                                     extras = col_d.radio("Fines de semana y Feriados", ["Libres (Descanso)", "Extras (Sáb/Dom/Feriado)"], index=1 if is_extras else 0)
                                     
                                     if nv_data_sel.get('tipo_servicio') == 'SE TERRENO':
                                         st.markdown("#### 🕒 Horarios Especiales de Terreno")
                                         c_th1, c_th2, c_th3 = st.columns(3)
                                         
-                                        existing_hi = df_act['hora_inicio_t'].iloc[0] if 'hora_inicio_t' in df_act.columns and pd.notna(df_act['hora_inicio_t'].iloc[0]) and df_act['hora_inicio_t'].iloc[0] != "" else '08:00'
-                                        existing_hf = df_act['hora_fin_t'].iloc[0] if 'hora_fin_t' in df_act.columns and pd.notna(df_act['hora_fin_t'].iloc[0]) and df_act['hora_fin_t'].iloc[0] != "" else '17:30'
-                                        existing_hd = float(df_act['horas_diarias'].iloc[0]) if 'horas_diarias' in df_act.columns and pd.notna(df_act['horas_diarias'].iloc[0]) and float(df_act['horas_diarias'].iloc[0]) > 0 else 9.5
+                                        existing_hi = df_latest['hora_inicio_t'].iloc[0] if 'hora_inicio_t' in df_latest.columns and pd.notna(df_latest['hora_inicio_t'].iloc[0]) and df_latest['hora_inicio_t'].iloc[0] != "" else '08:00'
+                                        existing_hf = df_latest['hora_fin_t'].iloc[0] if 'hora_fin_t' in df_latest.columns and pd.notna(df_latest['hora_fin_t'].iloc[0]) and df_latest['hora_fin_t'].iloc[0] != "" else '17:30'
+                                        existing_hd = float(df_latest['horas_diarias'].iloc[0]) if 'horas_diarias' in df_latest.columns and pd.notna(df_latest['horas_diarias'].iloc[0]) and float(df_latest['horas_diarias'].iloc[0]) > 0 else 9.5
                             
                                         h_inicio_val = c_th1.time_input("Hora de Inicio", value=datetime.strptime(existing_hi, '%H:%M').time(), key=f"hi_{act}")
                                         h_fin_val = c_th2.time_input("Hora de Fin", value=datetime.strptime(existing_hf, '%H:%M').time(), key=f"hf_{act}")
@@ -916,8 +930,7 @@ def main_app():
                                     default_esps = [e for e in default_esps if e in ESPECIALISTAS] 
                                     
                                     nuevos_esps = col_e.multiselect("Asignar Especialistas", ESPECIALISTAS, default=default_esps)
-                                    
-                                    modalidad_turno = col_e.radio("Modalidad de Trabajo", ["Simultáneo (Todos a la vez)", "Contra Turno (Rotativo, ej: 7x7)"], help="En Contra Turno, las horas reales se dividirán equitativamente entre los especialistas seleccionados.")
+                                    modalidad_turno = col_e.radio("Modalidad de Trabajo", ["Simultáneo (Todos a la vez)", "Contra Turno (Rotativo, ej: 7x7)"], help="En Contra Turno, las horas reales se dividirán equitativamente.")
                                     
                                     if st.form_submit_button("Guardar Programación / Avance", use_container_width=True):
                                         if (is_atrasada or pausar_tarea) and not just_val.strip():
@@ -926,7 +939,19 @@ def main_app():
                                             st.error("❌ OBLIGATORIO: Para quitar el estado de atraso debe aumentar la cantidad de 'Días de duración total' o marcar el avance al 100%.")
                                         else:
                                             try:
-                                                supabase.table("asignaciones_personal").delete().eq("id_nv", nv_id_sel).eq("actividad_ssee", act).execute()
+                                                if is_resuming:
+                                                    # Si estamos reanudando, conservamos el segmento viejo pero le quitamos el TAG de pausa para que no moleste visualmente, y le ponemos "Pausa Finalizada"
+                                                    for rid in df_latest['id'].tolist():
+                                                        old_j = str(df_latest[df_latest['id'] == rid]['justificacion'].iloc[0])
+                                                        new_j = old_j.replace("[PAUSADA]", "").strip() + " (Pausa Finalizada)"
+                                                        supabase.table("asignaciones_personal").update({"justificacion": new_j}).eq("id", rid).execute()
+                                                else:
+                                                    # Si NO estamos reanudando, eliminamos y sobreescribimos SOLO el último segmento
+                                                    for rid in df_latest['id'].tolist():
+                                                        supabase.table("asignaciones_personal").delete().eq("id", rid).execute()
+                                                        
+                                                # Actualizamos el progreso de todos los segmentos pasados para que la barra se vea uniforme
+                                                supabase.table("asignaciones_personal").update({"progreso": nuevo_p}).eq("id_nv", nv_id_sel).eq("actividad_ssee", act).execute()
                                                 
                                                 incluye_finde = True if "Extras" in extras else False
                                                 f_f = calcular_fecha_fin_dinamica(f_ini, dias_trabajo, incluye_finde)
@@ -975,7 +1000,7 @@ def main_app():
                                                         }
                                                         safe_insert_asignacion(payload)
                                                         
-                                                st.success("✅ Actividad actualizada exitosamente.")
+                                                st.success("✅ Actividad actualizada y trazabilidad guardada exitosamente.")
                                                 st.rerun()
                                             except Exception as e:
                                                 st.error(f"❌ Error al procesar la actualización: {e}")
@@ -1103,23 +1128,22 @@ def main_app():
                 fechas_validas = df_g[df_g['comentarios'] != 'SIN_PROGRAMAR']['start_ts']
                 fecha_base_gantt = fechas_validas.min() if not fechas_validas.empty else (pd.to_datetime(datetime.today().date()) + pd.Timedelta(hours=8))
                 
-                # --- AGREGAR JUSTIFICACIÓN PARA LEER LA PAUSA EN EL GANTT ---
                 df_grouped = df_g.groupby(['id_nv', 'cliente', 'Labor', 'start_ts', 'end_ts', 'progreso', 'comentarios']).agg({
                     'especialista': lambda x: ", ".join(set(x)),
                     'justificacion': 'first'
                 }).reset_index()
                 
                 df_grouped = df_grouped.sort_values(by=['id_nv', 'start_ts'], ascending=[True, True])
-                
                 df_grouped['Eje_Y'] = df_grouped['id_nv'] + " | " + df_grouped['Labor']
-                
-                # --- TEXTO MÁS GRANDE Y EN NEGRITA DENTRO DE LA BARRA (AHORA SOLO NV Y PORCENTAJE) ---
-                df_grouped['Etiqueta_Barra'] = "<b>" + df_grouped['id_nv'] + " (" + df_grouped['progreso'].astype(str) + "%)</b>"
                 
                 expanded_rows = []
                 for _, row in df_grouped.iterrows():
                     start = row['start_ts']
                     end = row['end_ts']
+                    
+                    # --- AUTO-LIMPIEZA: IGNORAR TAREAS SIN PROGRAMAR PARA LIBERAR ESPACIO VISUAL ---
+                    if row['comentarios'] == 'SIN_PROGRAMAR':
+                        continue 
                     
                     is_task_paused = False
                     if pd.notna(row.get('justificacion')):
@@ -1131,15 +1155,7 @@ def main_app():
                     else:
                         row['Etiqueta_Barra'] = f"<b>{base_label}</b>"
                     
-                    if row['comentarios'] == 'SIN_PROGRAMAR':
-                        new_row = row.copy()
-                        new_row['start_ts'] = fecha_base_gantt
-                        new_row['end_ts'] = fecha_base_gantt + pd.Timedelta(minutes=30)
-                        new_row['Inicio'] = "Por definir"
-                        new_row['Fin'] = "Por definir"
-                        new_row['Etiqueta_Barra'] = "<b>⚠️ SIN FECHA</b>"
-                        expanded_rows.append(new_row)
-                    elif row['comentarios'] == 'LIBRES' or row['id_nv'] == 'INTERNO':
+                    if row['comentarios'] == 'LIBRES' or row['id_nv'] == 'INTERNO':
                         current_chunk_start = start
                         current_day = start.date()
                         end_day = end.date()
@@ -1192,7 +1208,6 @@ def main_app():
                     ts_inici = min_ts
                     ts_fi = max_ts
 
-                # --- MEJORA: FILTRAR LIMPIAMENTE Y RECALCULAR EJE Y ---
                 if not df_plot.empty:
                     df_plot = df_plot[(df_plot['end_ts'] >= ts_inici) & (df_plot['start_ts'] <= ts_fi)]
 
@@ -1214,14 +1229,13 @@ def main_app():
                         color_discrete_sequence=colores_globo
                     )
 
-                    # --- TEXTO EQUILIBRADO: HORIZONTAL Y AUTO-AJUSTABLE ---
                     fig.update_traces(
                         textposition='auto', 
                         insidetextanchor='middle', 
                         marker_line_width=0, 
                         opacity=0.95, 
                         width=0.75, 
-                        textangle=0, # Evita que el texto gire verticalmente bajo cualquier circunstancia
+                        textangle=0, 
                         textfont=dict(size=14, color='#000000', family="Arial")
                     )
                     
@@ -1268,7 +1282,7 @@ def main_app():
                     fig.update_xaxes(
                         range=[ts_inici.strftime("%Y-%m-%d 00:00:00"), ts_fi.strftime("%Y-%m-%d 23:59:59")],
                         tickformat="%d/%m/%Y", 
-                        dtick=86400000, # Muestra un punto exacto por cada día
+                        dtick=86400000, 
                         title="Fecha Operativa", 
                         tickfont=dict(size=12, color='#666'), 
                         gridcolor='rgba(0,0,0,0.05)', 
@@ -1416,10 +1430,11 @@ def main_app():
             df_kpi['monto_gasto_ajustado'] = df_kpi.apply(lambda row: row['monto_gasto'] / tasa_cambio if row['moneda'] == 'USD' else row['monto_gasto'], axis=1)
             df_kpi['Margen'] = df_kpi['monto_vendido'] - df_kpi['monto_gasto_ajustado']
 
-            tab_global, tab_individual, tab_ocupacion, tab_tabla, tab_pendientes = st.tabs([
+            tab_global, tab_individual, tab_ocupacion, tab_historial, tab_tabla, tab_pendientes = st.tabs([
                 "🌍 Global Mensual", 
                 "🔍 Análisis Individual", 
                 "👥 Ocupación Personal",
+                "📅 Historial y Trazabilidad",
                 "📋 Tabla y Facturación", 
                 "⏳ Pendientes (Backlog)"
             ])
@@ -1821,6 +1836,50 @@ def main_app():
                 
                 df_oc_sorted['% Ocupación Real'] = df_oc_sorted['% Ocupación Real'].apply(lambda x: f"{x:.1f}%")
                 st.dataframe(df_oc_sorted, use_container_width=True, hide_index=True)
+
+            # --- NUEVA PESTAÑA: HISTORIAL Y TRAZABILIDAD ---
+            with tab_historial:
+                st.subheader("📅 Historial de Ejecución y Trazabilidad")
+                st.info("Revisa en detalle los períodos exactos en los que se ejecutó cada labor, los saltos por pausas y el personal involucrado en cada segmento.")
+                
+                nv_hist_sel = st.selectbox("Seleccione Proyecto para ver su historial completo:", df_kpi['Proyecto_Label'].tolist(), key="hist_nv")
+                if nv_hist_sel:
+                    row_nv_h = df_kpi[df_kpi['Proyecto_Label'] == nv_hist_sel].iloc[0]
+                    nv_id_h = row_nv_h['id_nv']
+                    
+                    if asig_all_raw:
+                        df_hist = pd.DataFrame(asig_all_raw)
+                        df_hist = df_hist[(df_hist['id_nv'] == nv_id_h) & (df_hist['actividad_ssee'] != 'PROYECCION_GLOBAL') & (df_hist['comentarios'] != 'SIN_PROGRAMAR')]
+                        
+                        if not df_hist.empty:
+                            hist_grouped = df_hist.groupby(['actividad_ssee', 'fecha_inicio', 'fecha_fin', 'justificacion', 'progreso']).agg({
+                                'especialista': lambda x: ", ".join([e for e in set(x) if e != 'Sin Asignar'])
+                            }).reset_index()
+                            
+                            def determinar_estado_historial(row):
+                                just = str(row['justificacion']).upper()
+                                if "[PAUSADA]" in just: return "⏸️ PAUSADA"
+                                if row['progreso'] >= 100: return "✅ COMPLETADO"
+                                return "▶️ EJECUTADO"
+                                
+                            hist_grouped['Estado'] = hist_grouped.apply(determinar_estado_historial, axis=1)
+                            
+                            hist_grouped.rename(columns={
+                                'actividad_ssee': 'Labor / Actividad',
+                                'fecha_inicio': 'Fecha Inicio',
+                                'fecha_fin': 'Fecha Fin',
+                                'progreso': 'Avance Reportado (%)',
+                                'justificacion': 'Justificación / Comentario',
+                                'especialista': 'Personal Involucrado'
+                            }, inplace=True)
+                            
+                            hist_grouped = hist_grouped.sort_values(by=['Labor / Actividad', 'Fecha Inicio'])
+                            
+                            st.dataframe(hist_grouped[['Labor / Actividad', 'Fecha Inicio', 'Fecha Fin', 'Estado', 'Avance Reportado (%)', 'Personal Involucrado', 'Justificación / Comentario']], use_container_width=True, hide_index=True)
+                        else:
+                            st.write("No hay historial de ejecución real registrado para este proyecto. Las labores aún no han iniciado.")
+                    else:
+                        st.write("Base de datos vacía.")
 
             # --- NUEVA PESTAÑA: TABLA GENERAL Y FACTURACIÓN POR PARCIALIDADES (HITOS) ---
             with tab_tabla:
