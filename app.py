@@ -973,98 +973,41 @@ def main_app():
                         st.info("Utilice el panel de la izquierda para definir las actividades del alcance de este proyecto.")
 
         st.divider()
-        st.subheader("3. Trabajos Internos y Administrativos")
-        st.info("Utilice este panel para asignar labores que no pertenecen a un proyecto comercial (ej: informes, capacitaciones, trabajos en taller o nave).")
-        
-        c_int1, c_int2 = st.columns(2)
-        with c_int1:
-            with st.expander("🏢 Asignar Nueva Labor Interna", expanded=False):
-                with st.form("form_internas"):
-                    esp_int = st.multiselect("Especialista(s)", ESPECIALISTAS, key="int_esp")
-                    tipo_int = st.selectbox("Tipo de Labor", [
-                        "Informe de Visita Técnica",
-                        "Trabajos en Nave FPS (Taller)",
-                        "Carga de Cilindros",
-                        "Cursos y Capacitación",
-                        "Trabajo Administrativo",
-                        "Otro"
-                    ])
-                    desc_int = st.text_input("Descripción adicional (Opcional)")
-                    
-                    c_d1, c_d2 = st.columns(2)
-                    f_ini_int = c_d1.date_input("Fecha Inicio", format="DD/MM/YYYY", key="int_ini")
-                    f_fin_int = c_d2.date_input("Fecha Fin", format="DD/MM/YYYY", key="int_fin")
-                    
-                    if st.form_submit_button("Guardar Labor Interna", use_container_width=True):
-                        if esp_int and f_ini_int <= f_fin_int:
-                            try:
-                                act_nombre = f"{tipo_int}" + (f" - {desc_int}" if desc_int else "")
-                                hh_final = calcular_hh_ssee(f_ini_int, f_fin_int, incluye_finde=False)
-                                for esp in esp_int:
-                                    p_asig = {
-                                        "id_nv": "INTERNO", 
-                                        "especialista": esp, 
-                                        "fecha_inicio": str(f_ini_int), 
-                                        "fecha_fin": str(f_fin_int), 
-                                        "hh_asignadas": hh_final, 
-                                        "actividad_ssee": act_nombre, 
-                                        "comentarios": "LIBRES", 
-                                        "progreso": 100,
-                                        "hora_inicio_t": "08:00",
-                                        "hora_fin_t": "17:30",
-                                        "horas_diarias": 9.5
-                                    }
-                                    safe_insert_asignacion(p_asig)
-                                st.success("✅ Labor interna registrada. Aparecerá en la Matriz y el Gantt.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Error al registrar labor: {e}")
-                        else:
-                            st.error("⚠️ Seleccione especialistas y asegúrese de que las fechas sean correctas.")
-                            
-        with c_int2:
-            with st.expander("🗑️ Gestionar Labores Internas activas", expanded=False):
-                internas_raw = supabase.table("asignaciones_personal").select("*").eq("id_nv", "INTERNO").execute().data
-                if internas_raw:
-                    df_int_borrar = pd.DataFrame(internas_raw)
-                    opciones_int_borrar = {}
-                    for _, row in df_int_borrar.iterrows():
-                        etiqueta = f"{row['especialista']} | {row['actividad_ssee']} | {row['fecha_inicio']}"
-                        opciones_int_borrar[etiqueta] = row['id']
-                        
-                    int_seleccionada = st.selectbox("Seleccione labor a eliminar", list(opciones_int_borrar.keys()))
-                    if st.button("🗑️ Eliminar Labor Interna"):
-                        try:
-                            id_int = opciones_int_borrar[int_seleccionada]
-                            supabase.table("asignaciones_personal").delete().eq("id", id_int).execute()
-                            st.success("✅ Labor eliminada exitosamente.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al eliminar: {e}")
-                else:
-                    st.write("No hay labores internas registradas en el sistema.")
-
-        st.divider()
         st.subheader("4. Cronograma Operativo (Gantt)")
         
-        c_v1, c_v2, c_v3 = st.columns(3)
+        # --- NUEVOS FILTROS DE VISTA (SEPARADOS EN DOS FILAS) ---
+        c_v1, c_v2 = st.columns(2)
         vista_gantt = c_v1.radio("Filtro de Vista:", ["🌍 General (Todos)", "🔍 Por Proyecto Seleccionado"], horizontal=True)
-        finestra_temps = c_v2.radio("⏳ Ventana de Tiempo:", ["Todo el Proyecto", "1 Semana", "15 Días", "1 Mes"], horizontal=True, index=2)
-        data_inici_gantt = c_v3.date_input("📅 Fecha de inicio", value=datetime.today().date())
+        filtro_tipo = c_v2.radio("Tipo de Servicio (Filtra la vista General):", ["Todos", "SSEE", "SE TERRENO", "Internos (RRHH / Taller)"], horizontal=True)
+        
+        c_v3, c_v4 = st.columns(2)
+        finestra_temps = c_v3.radio("⏳ Ventana de Tiempo:", ["Todo el Proyecto", "1 Semana", "15 Días", "1 Mes"], horizontal=True, index=2)
+        data_inici_gantt = c_v4.date_input("📅 Fecha de inicio", value=datetime.today().date())
 
         asig_gantt_raw = supabase.table("asignaciones_personal").select("*").execute().data
         if asig_gantt_raw:
             df_g = pd.DataFrame(asig_gantt_raw)
             df_g = df_g[df_g['actividad_ssee'] != 'PROYECCION_GLOBAL']
             
+            # Preparamos los diccionarios de cruce para Clientes y Tipos de Servicio
+            nvs_gantt_todas = obtener_nvs()
+            nvs_info = {n['id_nv']: n['cliente'] for n in nvs_gantt_todas} if nvs_gantt_todas else {}
+            nvs_tipo = {n['id_nv']: n['tipo_servicio'] for n in nvs_gantt_todas} if nvs_gantt_todas else {}
+            
+            nvs_info['AUSENCIA'] = 'Gestión Interna (RRHH)'
+            nvs_tipo['AUSENCIA'] = 'Internos (RRHH / Taller)'
+            nvs_info['INTERNO'] = 'Gestión Interna (Operaciones)'
+            nvs_tipo['INTERNO'] = 'Internos (RRHH / Taller)'
+            
             if vista_gantt == "🔍 Por Proyecto Seleccionado":
                 df_g = df_g[df_g['id_nv'] == nv_id_sel]
+            else:
+                # Aplicamos el filtro por tipo si no está en "Todos"
+                if filtro_tipo != "Todos":
+                    df_g['tipo_temp'] = df_g['id_nv'].map(nvs_tipo)
+                    df_g = df_g[df_g['tipo_temp'] == filtro_tipo]
             
             if not df_g.empty:
-                nvs_info = {n['id_nv']: n['cliente'] for n in obtener_nvs()}
-                nvs_info['AUSENCIA'] = 'Gestión Interna (RRHH)'
-                nvs_info['INTERNO'] = 'Gestión Interna (Operaciones)'
-                
                 df_g['cliente'] = df_g['id_nv'].map(nvs_info)
                 df_g['Labor'] = df_g['actividad_ssee'].fillna('Servicio Terreno')
                 
@@ -1180,7 +1123,15 @@ def main_app():
                     )
 
                     # --- TEXTO MÁS GRANDE Y EN NEGRO ---
-                    fig.update_traces(textposition='inside', insidetextanchor='middle', marker_line_width=0, opacity=0.95, width=0.55, textfont=dict(size=18, color='#000000'))
+                    fig.update_traces(
+                        textposition='inside', 
+                        insidetextanchor='middle', 
+                        marker_line_width=0, 
+                        opacity=0.95, 
+                        width=0.75, # Barra un poco más gruesa para que la letra quepa holgadamente
+                        insidetextfont=dict(size=18, color='#000000', family="Arial"), # Forzamos letra muy grande y negra
+                        constraintext='none' # CLAVE: Evita que el gráfico achique la letra automáticamente
+                    )
                     
                     # --- MEJORA VISUAL EJE Y: FORZAR CATEGORÍAS PARA EVITAR SOLAPAMIENTO ---
                     fig.update_yaxes(
