@@ -1087,10 +1087,11 @@ def main_app():
                 
                 df_grouped = df_grouped.sort_values(by=['id_nv', 'start_ts'], ascending=[True, True])
                 
-                # --- UNA SOLA LÍNEA EN EJE Y ---
-                df_grouped['Eje_Y'] = df_grouped['cliente'].str.upper() + " (" + df_grouped['id_nv'] + ") | " + df_grouped['Labor']
+                # --- MEJORA VISUAL EJE Y: UNA SOLA LÍNEA LIMPIA (SIN CLIENTE) ---
+                df_grouped['Eje_Y'] = df_grouped['id_nv'] + " | " + df_grouped['Labor']
                 orden_eje_y = df_grouped['Eje_Y'].unique()
-                # --- TEXTO MÁS GRANDE Y EN NEGRITA ---
+                
+                # --- TEXTO MÁS GRANDE Y EN NEGRITA DENTRO DE LA BARRA ---
                 df_grouped['Etiqueta_Barra'] = "<b>" + df_grouped['Labor'] + " (" + df_grouped['progreso'].astype(str) + "%)</b>"
                 
                 expanded_rows = []
@@ -1178,8 +1179,10 @@ def main_app():
                         color_discrete_sequence=colores_globo
                     )
 
+                    # --- TEXTO MÁS GRANDE Y EN NEGRO ---
                     fig.update_traces(textposition='inside', insidetextanchor='middle', marker_line_width=0, opacity=0.95, width=0.55, textfont=dict(size=18, color='#000000'))
                     
+                    # --- MEJORA VISUAL EJE Y: FORZAR CATEGORÍAS PARA EVITAR SOLAPAMIENTO ---
                     fig.update_yaxes(
                         autorange="reversed", 
                         title="", 
@@ -1230,10 +1233,11 @@ def main_app():
                         automargin=True
                     )
                     
-                    altura_dinamica = max(400, len(df_plot['Eje_Y'].unique()) * 80)
+                    # --- MEJORA VISUAL EJE Y: MARGEN Y ESPACIO VERTICAL AMPLIADO ---
+                    altura_dinamica = max(400, len(df_plot['Eje_Y'].unique()) * 70)
                     fig.update_layout(
                         height=altura_dinamica, 
-                        margin=dict(l=450, r=30, t=60, b=80), 
+                        margin=dict(l=250, r=30, t=60, b=80), 
                         plot_bgcolor='white', 
                         paper_bgcolor='white', 
                         legend_title_text='', 
@@ -1470,6 +1474,9 @@ def main_app():
 
                 total_dias_proyectados = int(round(total_dias_proyectados))
                 total_dias_ejecutados = int(round(total_dias_ejecutados))
+                
+                # --- CORRECCIÓN ERROR NAMERROR: CREAR df_kpi_mes ANTES DEL IF ---
+                df_kpi_mes = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)].copy()
                 
                 if df_kpi_mes.empty and total_dias_ejecutados == 0 and total_dias_proyectados == 0:
                     st.info(f"No hay proyectos comerciales operando durante {mes_sel} de {anio_sel}.")
