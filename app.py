@@ -80,7 +80,6 @@ except Exception:
 
 # --- INICIALIZACIÓN DE PROYECTOS INTERNOS (RRHH Y OPERACIONES) ---
 try:
-    # Proyecto Ausencias
     aus_nv = supabase.table("notas_venta").select("id_nv").eq("id_nv", "AUSENCIA").execute()
     if not aus_nv.data:
         supabase.table("notas_venta").insert({
@@ -89,7 +88,6 @@ try:
             "hh_vendidas": 0.0, "estado": "Abierta"
         }).execute()
         
-    # Proyecto Administrativo/Interno
     int_nv = supabase.table("notas_venta").select("id_nv").eq("id_nv", "INTERNO").execute()
     if not int_nv.data:
         supabase.table("notas_venta").insert({
@@ -196,8 +194,8 @@ def calcular_hh_ssee(f_ini, f_fin, incluye_finde=False, horas_diarias=None):
     return hh
 
 def obtener_nvs(estado_filter=None):
-    # Excluir explícitamente AUSENCIA e INTERNO
-    query = supabase.table("notas_venta").select("*").neq("id_nv", "AUSENCIA").neq("id_nv", "INTERNO")
+    # Excluye RRHH pero incluye los proyectos INTERNOS para poder editarlos en la Pestaña 3
+    query = supabase.table("notas_venta").select("*").neq("id_nv", "AUSENCIA")
     if estado_filter: query = query.eq("estado", estado_filter)
     return query.execute().data
 
@@ -545,14 +543,15 @@ def main_app():
     with tab2:
         st.header("Matriz de Recursos (Proyección Global)")
         
-        nvs_activas = obtener_nvs("Abierta")
-        if nvs_activas:
-            dict_nvs_label = {f"{n['id_nv']} - {n['cliente']}": n for n in nvs_activas}
+        # Filtro exclusivo de matriz comercial
+        nvs_activas_comercial = [n for n in obtener_nvs("Abierta") if n['id_nv'] != "INTERNO"]
+        if nvs_activas_comercial:
+            dict_nvs_label = {f"{n['id_nv']} - {n['cliente']}": n for n in nvs_activas_comercial}
             
             col_exp1, col_exp2 = st.columns(2)
             
             with col_exp1:
-                with st.expander("➕ Asignar Proyección a Proyecto", expanded=False):
+                with st.expander("➕ Asignar Proyección a Proyecto Comercial", expanded=False):
                     with st.form("form_proyeccion"):
                         nv_label_sel = st.selectbox("Proyecto (NV - Cliente)", list(dict_nvs_label.keys()), key="proy_nv")
                         nv_data_sel = dict_nvs_label[nv_label_sel]
@@ -881,33 +880,44 @@ def main_app():
                                 if especialistas_matriz:
                                     st.info(f"💡 **Personal base de la Matriz Semanal:** {', '.join(especialistas_matriz)}")
                                     
+                                if len(df_act_raw) > len(df_latest):
+                                    st.caption("📜 Esta tarea tiene múltiples segmentos de tiempo (ha sido pausada y reanudada previamente).")
+                                    
                                 with st.form(key=f"form_update_{nv_id_sel}_{act}"):
                                     
-                                    pausar_tarea = st.checkbox("⏸️ Pausar esta actividad (Congela los días para no generar alertas de atraso)", value=is_paused)
-                                    is_resuming = is_paused and not pausar_tarea
+                                    opciones_accion = ["Actualizar Avance / Fechas", "⏸️ Pausar Actividad"]
+                                    if is_paused:
+                                        opciones_accion = ["▶️ Reanudar Actividad", "Actualizar Avance (Estando Pausada)"]
+                                        
+                                    accion_seleccionada = st.radio("Acción a realizar:", opciones_accion, horizontal=True)
                                     
-                                    if is_resuming:
-                                        st.info("🔄 **Reanudando Tarea:** Se congelará el período pausado anterior en el historial y se creará un nuevo bloque de trabajo desde la nueva Fecha de Inicio.")
-                                        f_ini_default = hoy
-                                        dias_default = 1
-                                    else:
-                                        f_ini_default = curr_f_ini
-                                        dias_default = dias_estimados
-                                        
-                                    if is_atrasada and not pausar_tarea:
-                                        st.error(f"⚠️ El tiempo límite programado ({curr_f_fin.strftime('%d/%m/%Y')}) ya se cumplió. Es obligatorio justificar el atraso.")
-                                        just_val = st.text_input("Justificación del Atraso (Requerido):", value=existing_just_display)
-                                    else:
-                                        just_val = st.text_input("Justificación o Comentario (Requerido si se pausa):", value=existing_just_display)
-                                        
                                     col_p, col_f = st.columns([1, 1.5])
                                     nuevo_p = col_p.slider("Avance Específico %", 0, 100, curr_prog)
-                                    f_ini = col_f.date_input("Fecha Inicio", value=f_ini_default, format="DD/MM/YYYY")
                                     
                                     col_d, col_e = st.columns(2)
-                                    dias_trabajo = col_d.number_input("Días de duración total", min_value=1, value=dias_default)
                                     
-                                    dias_extra_manual = col_d.number_input("Días Extra (Atrasos)", min_value=0, value=existing_dias_extras, help="Días de retraso acumulados. Corrija a 0 si hubo un error.")
+                                    # Lógica dinámica según la acción seleccionada
+                                    if accion_seleccionada == "⏸️ Pausar Actividad":
+                                        st.info("Al pausar, se congelará el bloque de trabajo actual hasta la fecha indicada para no marcar atraso.")
+                                        f_ini = curr_f_ini
+                                        f_pausa = col_f.date_input("Fecha en que se detuvo el trabajo", value=hoy, format="DD/MM/YYYY")
+                                        dias_trabajo = max(1, (f_pausa - curr_f_ini).days + 1)
+                                        just_val = st.text_input("Motivo de la Pausa (Requerido):", value=existing_just_display)
+                                        
+                                    elif accion_seleccionada == "▶️ Reanudar Actividad":
+                                        st.info("Se creará un NUEVO bloque de trabajo desde la nueva fecha de inicio. El bloque pausado anterior se conservará en el historial.")
+                                        f_ini = col_f.date_input("Nueva Fecha de Inicio (Reanudación)", value=hoy, format="DD/MM/YYYY")
+                                        dias_trabajo = col_d.number_input("Días de trabajo restantes para terminar", min_value=1, value=dias_estimados)
+                                        just_val = st.text_input("Comentario (Opcional):", value="")
+                                        
+                                    else: # Actualizaciones normales
+                                        if is_atrasada:
+                                            st.error(f"⚠️ El tiempo programado ({curr_f_fin.strftime('%d/%m/%Y')}) ya se cumplió. Obligatorio justificar.")
+                                        f_ini = col_f.date_input("Fecha Inicio", value=curr_f_ini, format="DD/MM/YYYY")
+                                        dias_trabajo = col_d.number_input("Días de duración", min_value=1, value=dias_estimados)
+                                        just_val = st.text_input("Justificación / Comentario:", value=existing_just_display)
+                                    
+                                    dias_extra_manual = col_d.number_input("Días Extra (Atrasos)", min_value=0, value=existing_dias_extras)
                                     extras = col_d.radio("Fines de semana y Feriados", ["Libres (Descanso)", "Extras (Sáb/Dom/Feriado)"], index=1 if is_extras else 0)
                                     
                                     if nv_data_sel.get('tipo_servicio') == 'SE TERRENO':
@@ -932,25 +942,25 @@ def main_app():
                                     nuevos_esps = col_e.multiselect("Asignar Especialistas", ESPECIALISTAS, default=default_esps)
                                     modalidad_turno = col_e.radio("Modalidad de Trabajo", ["Simultáneo (Todos a la vez)", "Contra Turno (Rotativo, ej: 7x7)"], help="En Contra Turno, las horas reales se dividirán equitativamente.")
                                     
-                                    if st.form_submit_button("Guardar Programación / Avance", use_container_width=True):
-                                        if (is_atrasada or pausar_tarea) and not just_val.strip():
-                                            st.error("❌ OBLIGATORIO: Debe ingresar una justificación si la actividad se atrasa o se pone en pausa.")
-                                        elif is_atrasada and not pausar_tarea and dias_trabajo <= dias_estimados and nuevo_p < 100:
-                                            st.error("❌ OBLIGATORIO: Para quitar el estado de atraso debe aumentar la cantidad de 'Días de duración total' o marcar el avance al 100%.")
+                                    if st.form_submit_button("Guardar Operación", use_container_width=True):
+                                        if (is_atrasada or accion_seleccionada == "⏸️ Pausar Actividad") and not just_val.strip():
+                                            st.error("❌ OBLIGATORIO: Debe ingresar una justificación.")
+                                        elif is_atrasada and accion_seleccionada == "Actualizar Avance / Fechas" and dias_trabajo <= dias_estimados and nuevo_p < 100:
+                                            st.error("❌ OBLIGATORIO: Para quitar el estado de atraso debe aumentar la cantidad de días o marcar el avance al 100%.")
                                         else:
                                             try:
-                                                if is_resuming:
-                                                    # Si estamos reanudando, conservamos el segmento viejo pero le quitamos el TAG de pausa para que no moleste visualmente, y le ponemos "Pausa Finalizada"
-                                                    for rid in df_latest['id'].tolist():
+                                                ids_latest = df_latest['id'].tolist()
+                                                
+                                                if accion_seleccionada == "▶️ Reanudar Actividad":
+                                                    for rid in ids_latest:
                                                         old_j = str(df_latest[df_latest['id'] == rid]['justificacion'].iloc[0])
-                                                        new_j = old_j.replace("[PAUSADA]", "").strip() + " (Pausa Finalizada)"
+                                                        new_j = old_j.replace("[PAUSADA]", "").strip() + " (Finalizada)"
                                                         supabase.table("asignaciones_personal").update({"justificacion": new_j}).eq("id", rid).execute()
                                                 else:
-                                                    # Si NO estamos reanudando, eliminamos y sobreescribimos SOLO el último segmento
-                                                    for rid in df_latest['id'].tolist():
+                                                    for rid in ids_latest:
                                                         supabase.table("asignaciones_personal").delete().eq("id", rid).execute()
                                                         
-                                                # Actualizamos el progreso de todos los segmentos pasados para que la barra se vea uniforme
+                                                # Asegurar consistencia de progreso en todos los segmentos históricos
                                                 supabase.table("asignaciones_personal").update({"progreso": nuevo_p}).eq("id_nv", nv_id_sel).eq("actividad_ssee", act).execute()
                                                 
                                                 incluye_finde = True if "Extras" in extras else False
@@ -962,7 +972,7 @@ def main_app():
                                                 else:
                                                     hh_por_persona = hh_base
                                                     
-                                                final_justificacion_db = f"[PAUSADA] {just_val}" if pausar_tarea else just_val
+                                                final_justificacion_db = f"[PAUSADA] {just_val}" if accion_seleccionada == "⏸️ Pausar Actividad" or (accion_seleccionada == "Actualizar Avance (Estando Pausada)") else just_val
                                                 
                                                 if not nuevos_esps:
                                                     payload = {
@@ -1000,7 +1010,7 @@ def main_app():
                                                         }
                                                         safe_insert_asignacion(payload)
                                                         
-                                                st.success("✅ Actividad actualizada y trazabilidad guardada exitosamente.")
+                                                st.success("✅ Operación guardada y trazada exitosamente.")
                                                 st.rerun()
                                             except Exception as e:
                                                 st.error(f"❌ Error al procesar la actualización: {e}")
@@ -1009,7 +1019,7 @@ def main_app():
 
         st.divider()
         st.subheader("3. Asignación de Trabajos Internos (Taller / Oficina / Cursos)")
-        st.info("Utilice este panel para asignar labores que no pertenecen a un proyecto comercial.")
+        st.info("Utilice este panel para crear labores internas. Luego podrá actualizar su avance desde el panel superior seleccionando 'INTERNO - Gestión Interna (Operaciones)'.")
         
         c_int1, c_int2 = st.columns(2)
         with c_int1:
@@ -1141,7 +1151,7 @@ def main_app():
                     start = row['start_ts']
                     end = row['end_ts']
                     
-                    # --- AUTO-LIMPIEZA: IGNORAR TAREAS SIN PROGRAMAR PARA LIBERAR ESPACIO VISUAL ---
+                    # --- AUTO-LIMPIEZA: IGNORAR TAREAS SIN PROGRAMAR ---
                     if row['comentarios'] == 'SIN_PROGRAMAR':
                         continue 
                     
@@ -1208,11 +1218,12 @@ def main_app():
                     ts_inici = min_ts
                     ts_fi = max_ts
 
+                # --- FILTRADO ESTRICTO DE VENTANA (AUTO-ELIMINA EJES Y VACÍOS) ---
                 if not df_plot.empty:
                     df_plot = df_plot[(df_plot['end_ts'] >= ts_inici) & (df_plot['start_ts'] <= ts_fi)]
 
                 if df_plot.empty:
-                    st.info("No hay actividades programadas en la ventana de tiempo seleccionada.")
+                    st.info("No hay actividades programadas en la ventana de tiempo seleccionada. Limpiando gráfico...")
                 else:
                     orden_eje_y = df_plot['Eje_Y'].unique()
                     
@@ -1236,7 +1247,8 @@ def main_app():
                         opacity=0.95, 
                         width=0.75, 
                         textangle=0, 
-                        textfont=dict(size=14, color='#000000', family="Arial")
+                        textfont=dict(size=14, color='#000000', family="Arial"),
+                        constraintext='none'
                     )
                     
                     fig.update_yaxes(
@@ -1430,6 +1442,22 @@ def main_app():
             df_kpi['monto_gasto_ajustado'] = df_kpi.apply(lambda row: row['monto_gasto'] / tasa_cambio if row['moneda'] == 'USD' else row['monto_gasto'], axis=1)
             df_kpi['Margen'] = df_kpi['monto_vendido'] - df_kpi['monto_gasto_ajustado']
 
+            # --- CORRECCIÓN BUG NAMERROR: DF DEFINIDO GLOBALMENTE PARA TAB4 ---
+            año_actual = datetime.today().year
+            mes_actual = datetime.today().month
+            lista_anios = list(range(año_actual - 2, año_actual + 2))
+            
+            c_filt1, c_filt2 = st.columns(2)
+            mes_sel_global = c_filt1.selectbox("Filtro Maestro - Mes:", list(MESES_ES.values()), index=mes_actual-1)
+            anio_sel_global = c_filt2.selectbox("Filtro Maestro - Año:", lista_anios, index=lista_anios.index(año_actual))
+            
+            mes_num_global = list(MESES_ES.keys())[list(MESES_ES.values()).index(mes_sel_global)]
+            _, ultimo_dia = calendar.monthrange(anio_sel_global, mes_num_global)
+            fecha_inicio_mes = datetime(anio_sel_global, mes_num_global, 1).date()
+            fecha_fin_mes = datetime(anio_sel_global, mes_num_global, ultimo_dia).date()
+            
+            df_kpi_mes = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)].copy()
+
             tab_global, tab_individual, tab_ocupacion, tab_historial, tab_tabla, tab_pendientes = st.tabs([
                 "🌍 Global Mensual", 
                 "🔍 Análisis Individual", 
@@ -1440,20 +1468,7 @@ def main_app():
             ])
 
             with tab_global:
-                st.subheader("Visión Operativa Mensual (Consolidada en Días-Hombre)")
-                
-                c_filt1, c_filt2 = st.columns(2)
-                año_actual = datetime.today().year
-                mes_actual = datetime.today().month
-                lista_anios = list(range(año_actual - 2, año_actual + 2))
-                
-                mes_sel = c_filt1.selectbox("Seleccione el Mes:", list(MESES_ES.values()), index=mes_actual-1)
-                anio_sel = c_filt2.selectbox("Seleccione el Año:", lista_anios, index=lista_anios.index(año_actual))
-                
-                mes_num = list(MESES_ES.keys())[list(MESES_ES.values()).index(mes_sel)]
-                _, ultimo_dia = calendar.monthrange(anio_sel, mes_num)
-                fecha_inicio_mes = datetime(anio_sel, mes_num, 1).date()
-                fecha_fin_mes = datetime(anio_sel, mes_num, ultimo_dia).date()
+                st.subheader(f"Visión Operativa Mensual ({mes_sel_global} {anio_sel_global})")
                 
                 dias_habiles_mes = 0
                 curr_d = fecha_inicio_mes
@@ -1532,10 +1547,8 @@ def main_app():
                 total_dias_proyectados = int(round(total_dias_proyectados))
                 total_dias_ejecutados = int(round(total_dias_ejecutados))
                 
-                df_kpi_mes = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)].copy()
-                
                 if df_kpi_mes.empty and total_dias_ejecutados == 0 and total_dias_proyectados == 0:
-                    st.info(f"No hay proyectos comerciales operando durante {mes_sel} de {anio_sel}.")
+                    st.info(f"No hay proyectos comerciales operando durante {mes_sel_global} de {anio_sel_global}.")
                 else:
                     df_kpi_mes['venta_usd'] = df_kpi_mes.apply(lambda row: row['monto_vendido'] if row['moneda'] == 'USD' else row['monto_vendido'] / tasa_cambio, axis=1)
                     total_venta_usd = df_kpi_mes['venta_usd'].sum()
@@ -1548,7 +1561,7 @@ def main_app():
                     gasto_clp_fmt = f"{total_gasto_clp:,.0f}".replace(",", ".")
                     
                     col1, col2 = st.columns(2)
-                    col1.metric(f"Cartera Ofertada Consolidada en {mes_sel}", fmt_tot)
+                    col1.metric(f"Cartera Ofertada Consolidada en {mes_sel_global}", fmt_tot)
                     col2.metric("Ejecución de Gasto Acumulado (USD)", fmt_gas_usd, help=f"Tus rendiciones originales suman CLP ${gasto_clp_fmt} convertidas a la tasa actual.")
                     
                     st.markdown("<br>", unsafe_allow_html=True)
@@ -1567,7 +1580,7 @@ def main_app():
                                 "Días Consumidos (Reales)": "#F39C12",
                                 "Días Ausencia RRHH (Desc.)": "#E74C3C" 
                             },
-                            title=f"Balance de Tiempos Operativos y Capacidad de {mes_sel} {anio_sel}"
+                            title=f"Balance de Tiempos Operativos y Capacidad de {mes_sel_global} {anio_sel_global}"
                         )
                         fig_tiempos.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
                         fig_tiempos.update_layout(yaxis_title="Cantidad de Días-Hombre", showlegend=False, plot_bgcolor='white')
@@ -1584,7 +1597,7 @@ def main_app():
                             x="Avance_%", 
                             color="Avance_%",
                             color_continuous_scale=[[0, 'red'], [0.5, 'yellow'], [1, 'green']],
-                            title=f"Ranking de Avance Operativo por Proyecto (%) - {mes_sel}",
+                            title=f"Ranking de Avance Operativo por Proyecto (%) - {mes_sel_global}",
                             text="Avance_%"
                         )
                         fig_ranking.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
@@ -1731,22 +1744,11 @@ def main_app():
                         else:
                             st.info("Sin gastos registrados.")
 
-            # --- NUEVA PESTAÑA: OCUPACIÓN DE PERSONAL ---
             with tab_ocupacion:
-                st.subheader("👥 Ocupación de Personal por Mes")
+                st.subheader(f"👥 Ocupación de Personal - {mes_sel_global} {anio_sel_global}")
                 st.info("Esta herramienta calcula qué porcentaje del mes cada técnico estuvo ocupado en terreno, descontando sus días de ausencia/vacaciones.")
                 
-                c_oc1, c_oc2 = st.columns(2)
-                mes_sel_oc = c_oc1.selectbox("Mes:", list(MESES_ES.values()), index=mes_actual-1, key="mes_oc")
-                anio_sel_oc = c_oc2.selectbox("Año:", lista_anios, index=lista_anios.index(año_actual), key="anio_oc")
-                mes_num_oc = list(MESES_ES.keys())[list(MESES_ES.values()).index(mes_sel_oc)]
-                
-                _, ultimo_dia_oc = calendar.monthrange(anio_sel_oc, mes_num_oc)
-                fecha_inicio_oc = datetime(anio_sel_oc, mes_num_oc, 1).date()
-                fecha_fin_oc = datetime(anio_sel_oc, mes_num_oc, ultimo_dia_oc).date()
-                
-                dias_del_mes = [fecha_inicio_oc + timedelta(days=i) for i in range((fecha_fin_oc - fecha_inicio_oc).days + 1)]
-                dias_habiles_totales = sum(1 for d in dias_del_mes if d.weekday() < 5 and d.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026)
+                dias_del_mes = [fecha_inicio_mes + timedelta(days=i) for i in range((fecha_fin_mes - fecha_inicio_mes).days + 1)]
                 
                 data_ocupacion = []
                 
@@ -1822,7 +1824,7 @@ def main_app():
                     df_oc_sorted, 
                     x="Especialista", 
                     y=["Días Ocupado", "Días Ausente", "Días Disponibles (Hábiles)"],
-                    title=f"Distribución de Tiempos por Técnico - {mes_sel_oc} {anio_sel_oc}",
+                    title=f"Distribución de Tiempos por Técnico - {mes_sel_global} {anio_sel_global}",
                     color_discrete_map={
                         "Días Ocupado": "#3498DB", 
                         "Días Ausente": "#E74C3C", 
@@ -1837,7 +1839,6 @@ def main_app():
                 df_oc_sorted['% Ocupación Real'] = df_oc_sorted['% Ocupación Real'].apply(lambda x: f"{x:.1f}%")
                 st.dataframe(df_oc_sorted, use_container_width=True, hide_index=True)
 
-            # --- NUEVA PESTAÑA: HISTORIAL Y TRAZABILIDAD ---
             with tab_historial:
                 st.subheader("📅 Historial de Ejecución y Trazabilidad")
                 st.info("Revisa en detalle los períodos exactos en los que se ejecutó cada labor, los saltos por pausas y el personal involucrado en cada segmento.")
@@ -1852,7 +1853,6 @@ def main_app():
                         df_hist = df_hist[(df_hist['id_nv'] == nv_id_h) & (df_hist['actividad_ssee'] != 'PROYECCION_GLOBAL') & (df_hist['comentarios'] != 'SIN_PROGRAMAR')].copy()
                         
                         if not df_hist.empty:
-                            # --- CÁLCULO DE HORAS Y DÍAS POR SEGMENTO ---
                             df_hist['horas_diarias_calc'] = pd.to_numeric(df_hist['horas_diarias'], errors='coerce').fillna(9.0).apply(lambda x: float(x) if float(x) > 0 else 9.0)
                             df_hist['hh_asignadas_num'] = pd.to_numeric(df_hist['hh_asignadas'], errors='coerce').fillna(0)
                             df_hist['dias_hombre'] = df_hist['hh_asignadas_num'] / df_hist['horas_diarias_calc']
@@ -1871,7 +1871,6 @@ def main_app():
                                 
                             hist_grouped['Estado'] = hist_grouped.apply(determinar_estado_historial, axis=1)
                             
-                            # Formateo de los valores numéricos
                             hist_grouped['hh_asignadas_num'] = hist_grouped['hh_asignadas_num'].apply(lambda x: f"{x:.1f} HH")
                             hist_grouped['dias_hombre'] = hist_grouped['dias_hombre'].apply(lambda x: f"{x:.1f} Días")
                             
@@ -1888,28 +1887,46 @@ def main_app():
                             
                             hist_grouped = hist_grouped.sort_values(by=['Labor / Actividad', 'Fecha Inicio'])
                             
-                            # Reordenar columnas para incluir horas y días
                             st.dataframe(hist_grouped[['Labor / Actividad', 'Fecha Inicio', 'Fecha Fin', 'Estado', 'Avance Reportado (%)', 'Horas Utilizadas', 'Días (Cantidad)', 'Personal Involucrado', 'Justificación / Comentario']], use_container_width=True, hide_index=True)
                         else:
                             st.write("No hay historial de ejecución real registrado para este proyecto. Las labores aún no han iniciado.")
                     else:
                         st.write("Base de datos vacía.")
 
-            # --- NUEVA PESTAÑA: TABLA GENERAL Y FACTURACIÓN POR PARCIALIDADES (HITOS) ---
             with tab_tabla:
                 st.subheader("Tabla General y Control de Facturación Mensual")
                 
-                c_tbl1, c_tbl2 = st.columns(2)
-                mes_sel_t = c_tbl1.selectbox("Filtrar por Mes:", list(MESES_ES.values()), index=mes_actual-1, key="mes_tbl")
-                anio_sel_t = c_tbl2.selectbox("Filtrar por Año:", lista_anios, index=lista_anios.index(año_actual), key="anio_tbl")
-                mes_num_t = list(MESES_ES.keys())[list(MESES_ES.values()).index(mes_sel_t)]
+                # --- NUEVA VISTA CONSOLIDADA POR PROYECTO BASE ---
+                st.markdown("### 📊 Resumen Consolidado por Proyecto Base (Todas las Etapas)")
+                st.info("Agrupa automáticamente todas las etapas (ej. - 1, - 2) bajo el mismo número de Nota de Venta base.")
+                df_kpi['Base_NV'] = df_kpi['id_nv'].apply(lambda x: str(x).split(' - ')[0].strip())
+                resumen_base = df_kpi.groupby(['Base_NV', 'cliente', 'moneda']).agg({
+                    'monto_vendido': 'sum',
+                    'monto_facturado_hitos': 'sum',
+                    'monto_pendiente': 'sum',
+                    'monto_gasto_ajustado': 'sum',
+                    'Margen': 'sum'
+                }).reset_index()
                 
-                st.markdown(f"### 💸 1. Pronóstico de Facturación para {mes_sel_t} {anio_sel_t}")
-                st.info("Visualiza las parcialidades (hitos) programadas, y las ejecuciones automáticas de este mes.")
+                def fmt_base_currency(row, col_name):
+                    val = row[col_name]
+                    if row['moneda'] == 'USD': return f"USD ${val:,.2f}"
+                    return f"CLP ${val:,.0f}".replace(",", ".")
+                    
+                resumen_base['Ofertado Total'] = resumen_base.apply(lambda r: fmt_base_currency(r, 'monto_vendido'), axis=1)
+                resumen_base['Facturado Total'] = resumen_base.apply(lambda r: fmt_base_currency(r, 'monto_facturado_hitos'), axis=1)
+                resumen_base['Pendiente Total'] = resumen_base.apply(lambda r: fmt_base_currency(r, 'monto_pendiente'), axis=1)
+                resumen_base['Margen Total'] = resumen_base.apply(lambda r: fmt_base_currency(r, 'Margen'), axis=1)
+                
+                resumen_base.rename(columns={'Base_NV': 'Proyecto Base', 'cliente': 'Cliente'}, inplace=True)
+                st.dataframe(resumen_base[['Proyecto Base', 'Cliente', 'Ofertado Total', 'Facturado Total', 'Pendiente Total', 'Margen Total']], use_container_width=True, hide_index=True)
+
+                st.divider()
+                st.markdown(f"### 💸 Pronóstico de Facturación Activa para {mes_sel_global} {anio_sel_global}")
                 
                 df_hitos_mes = pd.DataFrame()
                 if not df_hitos.empty:
-                    df_hitos_mes = df_hitos[(df_hitos['mes'] == mes_num_t) & (df_hitos['anio'] == anio_sel_t)].copy()
+                    df_hitos_mes = df_hitos[(df_hitos['mes'] == mes_num_global) & (df_hitos['anio'] == anio_sel_global)].copy()
                     if not df_hitos_mes.empty:
                         df_hitos_mes = df_hitos_mes.merge(df_kpi[['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'monto_vendido', 'monto_pendiente']], on='id_nv', how='left')
                         df_hitos_mes['monto_usd'] = df_hitos_mes.apply(lambda r: r['monto'] if r['moneda'] == 'USD' else r['monto'] / tasa_cambio, axis=1)
@@ -1917,19 +1934,12 @@ def main_app():
                 if df_hitos_mes.empty:
                     df_hitos_mes = pd.DataFrame(columns=['id', 'id_nv', 'cliente', 'tipo_servicio', 'moneda', 'porcentaje', 'monto', 'estado', 'monto_usd'])
 
-                # --- PRONÓSTICO AUTOMÁTICO DE EJECUCIÓN ---
-                df_all_valid_asig = pd.DataFrame()
-                if asig_all_raw:
-                    df_temp_asig = pd.DataFrame(asig_all_raw)
-                    # Incluimos PROYECCION_GLOBAL para detectar fechas recién creadas en Comercial
-                    df_all_valid_asig = df_temp_asig[(df_temp_asig['id_nv'] != 'AUSENCIA') & (df_temp_asig['comentarios'] != 'SIN_PROGRAMAR')]
-
                 if not df_all_valid_asig.empty:
                     df_max_fin = df_all_valid_asig.groupby('id_nv')['fecha_fin'].max().reset_index()
                     df_max_fin['fecha_fin'] = pd.to_datetime(df_max_fin['fecha_fin']).dt.date
                     df_kpi_auto = df_kpi.merge(df_max_fin, on='id_nv', how='inner')
                     
-                    mask_auto = (pd.to_datetime(df_kpi_auto['fecha_fin']).dt.month == mes_num_t) & (pd.to_datetime(df_kpi_auto['fecha_fin']).dt.year == anio_sel_t)
+                    mask_auto = (pd.to_datetime(df_kpi_auto['fecha_fin']).dt.month == mes_num_global) & (pd.to_datetime(df_kpi_auto['fecha_fin']).dt.year == anio_sel_global)
                     nvs_auto = df_kpi_auto[mask_auto]
                     
                     nuevas_filas = []
