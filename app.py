@@ -125,6 +125,7 @@ ABREVIATURAS = {
     "Entrega materiales": "Mat", 
     "Montaje de detección": "M.Det", 
     "Montaje de supresión": "M.Sup", 
+    "Montaje de VESDA": "M.VESDA",
     "Cableado y conexionado": "Cabl", 
     "Programación": "Prog", 
     "PEM": "PEM", 
@@ -1896,17 +1897,11 @@ def main_app():
             with tab_tabla:
                 st.subheader("Tabla General y Control de Facturación Mensual")
                 
-                # --- NUEVA VISTA CONSOLIDADA POR PROYECTO BASE ---
-                st.markdown("### 📊 Resumen Consolidado por Proyecto Base (Todas las Etapas)")
-                st.info("Agrupa automáticamente todas las etapas (ej. - 1, - 2) bajo el mismo número de Nota de Venta base.")
-                df_kpi['Base_NV'] = df_kpi['id_nv'].apply(lambda x: str(x).split(' - ')[0].strip())
-                resumen_base = df_kpi.groupby(['Base_NV', 'cliente', 'moneda']).agg({
-                    'monto_vendido': 'sum',
-                    'monto_facturado_hitos': 'sum',
-                    'monto_pendiente': 'sum',
-                    'monto_gasto_ajustado': 'sum',
-                    'Margen': 'sum'
-                }).reset_index()
+                # --- NUEVA VISTA DESAGRUPADA POR NOTA DE VENTA ---
+                st.markdown("### 📊 Resumen Financiero por Nota de Venta (Ítem/Fase)")
+                st.info("Muestra el detalle financiero de cada ítem o fase de forma independiente.")
+                
+                resumen_base = df_kpi[~df_kpi['id_nv'].isin(['AUSENCIA', 'INTERNO'])].copy()
                 
                 def fmt_base_currency(row, col_name):
                     val = row[col_name]
@@ -1918,8 +1913,8 @@ def main_app():
                 resumen_base['Pendiente Total'] = resumen_base.apply(lambda r: fmt_base_currency(r, 'monto_pendiente'), axis=1)
                 resumen_base['Margen Total'] = resumen_base.apply(lambda r: fmt_base_currency(r, 'Margen'), axis=1)
                 
-                resumen_base.rename(columns={'Base_NV': 'Proyecto Base', 'cliente': 'Cliente'}, inplace=True)
-                st.dataframe(resumen_base[['Proyecto Base', 'Cliente', 'Ofertado Total', 'Facturado Total', 'Pendiente Total', 'Margen Total']], use_container_width=True, hide_index=True)
+                resumen_base.rename(columns={'id_nv': 'Nota de Venta', 'cliente': 'Cliente'}, inplace=True)
+                st.dataframe(resumen_base[['Nota de Venta', 'Cliente', 'Ofertado Total', 'Facturado Total', 'Pendiente Total', 'Margen Total']], use_container_width=True, hide_index=True)
 
                 st.divider()
                 st.markdown(f"### 💸 Pronóstico de Facturación Activa para {mes_sel_global} {anio_sel_global}")
