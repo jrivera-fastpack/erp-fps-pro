@@ -1442,7 +1442,6 @@ def main_app():
             df_kpi['monto_gasto_ajustado'] = df_kpi.apply(lambda row: row['monto_gasto'] / tasa_cambio if row['moneda'] == 'USD' else row['monto_gasto'], axis=1)
             df_kpi['Margen'] = df_kpi['monto_vendido'] - df_kpi['monto_gasto_ajustado']
 
-            # --- CORRECCIÓN BUG NAMERROR: DF DEFINIDO GLOBALMENTE PARA TAB4 ---
             año_actual = datetime.today().year
             mes_actual = datetime.today().month
             lista_anios = list(range(año_actual - 2, año_actual + 2))
@@ -1749,6 +1748,7 @@ def main_app():
                 st.info("Esta herramienta calcula qué porcentaje del mes cada técnico estuvo ocupado en terreno, descontando sus días de ausencia/vacaciones.")
                 
                 dias_del_mes = [fecha_inicio_mes + timedelta(days=i) for i in range((fecha_fin_mes - fecha_inicio_mes).days + 1)]
+                dias_habiles_totales = sum(1 for d in dias_del_mes if d.weekday() < 5 and d.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026)
                 
                 data_ocupacion = []
                 
