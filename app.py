@@ -1087,11 +1087,11 @@ def main_app():
                 
                 df_grouped = df_grouped.sort_values(by=['id_nv', 'start_ts'], ascending=[True, True])
                 
-                # --- MEJORA VISUAL EJE Y: UNA SOLA LÍNEA LIMPIA ---
+                # --- UNA SOLA LÍNEA EN EJE Y ---
                 df_grouped['Eje_Y'] = df_grouped['cliente'].str.upper() + " (" + df_grouped['id_nv'] + ") | " + df_grouped['Labor']
                 orden_eje_y = df_grouped['Eje_Y'].unique()
-                
-                df_grouped['Etiqueta_Barra'] = df_grouped['Labor'] + " (" + df_grouped['progreso'].astype(str) + "%)"
+                # --- TEXTO MÁS GRANDE Y EN NEGRITA ---
+                df_grouped['Etiqueta_Barra'] = "<b>" + df_grouped['Labor'] + " (" + df_grouped['progreso'].astype(str) + "%)</b>"
                 
                 expanded_rows = []
                 for _, row in df_grouped.iterrows():
@@ -1104,7 +1104,7 @@ def main_app():
                         new_row['end_ts'] = fecha_base_gantt + pd.Timedelta(minutes=30)
                         new_row['Inicio'] = "Por definir"
                         new_row['Fin'] = "Por definir"
-                        new_row['Etiqueta_Barra'] = "⚠️ SIN FECHA"
+                        new_row['Etiqueta_Barra'] = "<b>⚠️ SIN FECHA</b>"
                         expanded_rows.append(new_row)
                     elif row['comentarios'] == 'LIBRES' or row['id_nv'] == 'INTERNO':
                         current_chunk_start = start
@@ -1178,14 +1178,13 @@ def main_app():
                         color_discrete_sequence=colores_globo
                     )
 
-                    fig.update_traces(textposition='inside', insidetextanchor='middle', marker_line_width=0, opacity=0.95, width=0.55, textfont=dict(size=13, color='#333333'))
+                    fig.update_traces(textposition='inside', insidetextanchor='middle', marker_line_width=0, opacity=0.95, width=0.55, textfont=dict(size=18, color='#000000'))
                     
-                    # --- MEJORA VISUAL EJE Y: FORZAR CATEGORÍAS PARA EVITAR SOLAPAMIENTO ---
                     fig.update_yaxes(
                         autorange="reversed", 
                         title="", 
                         type="category",        
-                        tickmode="linear",      
+                        tickmode="linear", 
                         tickfont=dict(size=14, color='#333', family="Arial"), 
                         gridcolor='rgba(0,0,0,0.05)', 
                         categoryorder='array', 
@@ -1231,8 +1230,7 @@ def main_app():
                         automargin=True
                     )
                     
-                    # --- MEJORA VISUAL EJE Y: MARGEN IZQUIERDO Y ESPACIADO ---
-                    altura_dinamica = max(400, len(df_plot['Eje_Y'].unique()) * 70)
+                    altura_dinamica = max(400, len(df_plot['Eje_Y'].unique()) * 80)
                     fig.update_layout(
                         height=altura_dinamica, 
                         margin=dict(l=450, r=30, t=60, b=80), 
