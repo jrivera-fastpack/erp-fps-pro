@@ -1113,6 +1113,9 @@ def main_app():
                 
                 df_grouped['Eje_Y'] = df_grouped['id_nv'] + " | " + df_grouped['Labor']
                 
+                # --- TEXTO MÁS GRANDE Y EN NEGRITA DENTRO DE LA BARRA (AHORA SOLO NV Y PORCENTAJE) ---
+                df_grouped['Etiqueta_Barra'] = "<b>" + df_grouped['id_nv'] + " (" + df_grouped['progreso'].astype(str) + "%)</b>"
+                
                 expanded_rows = []
                 for _, row in df_grouped.iterrows():
                     start = row['start_ts']
@@ -1122,7 +1125,7 @@ def main_app():
                     if pd.notna(row.get('justificacion')):
                         is_task_paused = "[PAUSADA]" in str(row['justificacion']).upper()
                         
-                    base_label = f"{row['Labor']} ({row['progreso']}%)"
+                    base_label = f"{row['id_nv']} ({row['progreso']}%)"
                     if is_task_paused:
                         row['Etiqueta_Barra'] = f"<b>⏸️ {base_label} (PAUSADA)</b>"
                     else:
