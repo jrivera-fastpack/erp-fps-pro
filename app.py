@@ -1621,28 +1621,31 @@ def main_app():
                     a_p = row_nv['Avance_%']
                     d_p = row_nv['dias_proyectados']
                     
-                    # --- NUEVO CÁLCULO DE DÍAS REALES (POR FECHA CALENDARIO TRANSCURRIDA) ---
+                    # --- NUEVO CÁLCULO DE DÍAS REALES (POR FECHA CALENDARIO TRANSCURRIDA SIN HUECOS) ---
                     d_e_transcurridos = 0
                     df_acts_proyecto = df_hh_raw[df_hh_raw['id_nv'] == row_nv['id_nv']]
                     
                     if not df_acts_proyecto.empty:
-                        f_ini_min = pd.to_datetime(df_acts_proyecto['fecha_inicio']).min().date()
-                        f_fin_max = pd.to_datetime(df_acts_proyecto['fecha_fin']).max().date()
+                        fechas_activas = set()
                         hoy = datetime.today().date()
                         
-                        # Si todo está al 100%, el tiempo se congela en la fecha de término real. Si no, cuenta hasta hoy.
-                        is_completed = df_acts_proyecto['progreso'].min() == 100
-                        limite_conteo = f_fin_max if (is_completed and f_fin_max < hoy) else hoy
-                        
-                        if limite_conteo >= f_ini_min:
-                            curr = f_ini_min
-                            while curr <= limite_conteo:
+                        for _, row_act in df_acts_proyecto.iterrows():
+                            f_i = pd.to_datetime(row_act['fecha_inicio']).date()
+                            f_f = pd.to_datetime(row_act['fecha_fin']).date()
+                            comentarios = str(row_act.get('comentarios', ''))
+                            incluye_f = 'EXTRAS' in comentarios.upper()
+                            
+                            # Recorremos solo los días de este bloque de trabajo específico hasta el día de hoy
+                            curr = f_i
+                            while curr <= f_f and curr <= hoy:
                                 es_feriado = curr.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
                                 es_finde = curr.weekday() >= 5
-                                # Contamos los días hábiles que han pasado en la realidad
-                                if not (es_finde or es_feriado):
-                                    d_e_transcurridos += 1
+                                
+                                if incluye_f or (not es_finde and not es_feriado):
+                                    fechas_activas.add(curr) # Usamos set() para no contar el mismo día 2 veces si hay varios técnicos
                                 curr += timedelta(days=1)
+                                
+                        d_e_transcurridos = len(fechas_activas)
                                 
                     d_e = float(d_e_transcurridos)
                     # ------------------------------------------------------------------------
