@@ -2178,31 +2178,69 @@ def main_app():
                 
                 if not df_pendientes.empty:
                     df_pendientes['monto_usd_est'] = df_pendientes.apply(lambda row: row['monto_pendiente'] if row['moneda'] == 'USD' else row['monto_pendiente'] / tasa_cambio, axis=1)
-                    total_pendiente_usd = df_pendientes['monto_usd_est'].sum()
                     
-                    st.metric("Total Cartera Pendiente (Equivalente USD)", f"USD ${total_pendiente_usd:,.2f}")
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    
-                    cols_pend = ['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'monto_vendido', 'monto_pendiente', 'estado_facturacion']
-                    df_pend_display = df_pendientes[cols_pend].rename(columns={
-                        'id_nv': 'NV', 'cliente': 'Cliente', 'tipo_servicio': 'Tipo', 
-                        'moneda': 'Moneda', 'monto_vendido': 'Monto Ofertado Original',
-                        'monto_pendiente': 'Saldo Pendiente', 'estado_facturacion': 'Estado General'
-                    })
-                    
-                    def format_currency_backlog(val, mon):
-                        try:
-                            v = float(val)
-                        except Exception:
-                            return val
-                        if mon == 'USD':
-                            return f"USD ${v:,.2f}"
-                        return f"CLP ${v:,.0f}".replace(",", ".")
+                    def mostrar_bloque_backlog(df_sub, titulo):
+                        if df_sub.empty:
+                            return
                         
-                    df_pend_display['Monto Ofertado Original'] = df_pend_display.apply(lambda x: format_currency_backlog(x['Monto Ofertado Original'], x['Moneda']), axis=1)
-                    df_pend_display['Saldo Pendiente'] = df_pend_display.apply(lambda x: format_currency_backlog(x['Saldo Pendiente'], x['Moneda']), axis=1)
+                        st.markdown(f"#### {titulo}")
+                        total_usd = df_sub['monto_usd_est'].sum()
+                        total_clp = total_usd * tasa_cambio
+                        
+                        c_m1, c_m2 = st.columns(2)
+                        c_m1.metric("Total Pendiente (USD)", f"USD ${total_usd:,.2f}")
+                        c_m2.metric("Total Pendiente (CLP)", f"CLP ${total_clp:,.0f}".replace(",", "."))
+                        
+                        cols_pend = ['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'monto_vendido', 'monto_pendiente', 'estado_facturacion']
+                        df_show = df_sub[cols_pend].rename(columns={
+                            'id_nv': 'NV', 'cliente': 'Cliente', 'tipo_servicio': 'Tipo', 
+                            'moneda': 'Moneda', 'monto_vendido': 'Monto Ofertado Original',
+                            'monto_pendiente': 'Saldo Pendiente', 'estado_facturacion': 'Estado General'
+                        })
+                        
+                        def format_currency_backlog(val, mon):
+                            if pd.isna(val) or val == '': return ''
+                            if isinstance(val, str) and ('/' in val or 'USD' in val or 'CLP' in val): return val
+                            try:
+                                v = float(val)
+                            except Exception:
+                                return val
+                            if mon == 'USD':
+                                return f"USD ${v:,.2f}"
+                            return f"CLP ${v:,.0f}".replace(",", ".")
+                            
+                        df_show['Monto Ofertado Original'] = df_show.apply(lambda x: format_currency_backlog(x['Monto Ofertado Original'], x['Moneda']), axis=1)
+                        df_show['Saldo Pendiente'] = df_show.apply(lambda x: format_currency_backlog(x['Saldo Pendiente'], x['Moneda']), axis=1)
+                        
+                        str_tot_usd = f"USD ${total_usd:,.2f}"
+                        str_tot_clp = f"CLP ${total_clp:,.0f}".replace(",", ".")
+                        texto_total = f"{str_tot_usd}   /   {str_tot_clp}"
+                        
+                        total_row = pd.DataFrame([{
+                            'NV': 'TOTALES', 'Cliente': '', 'Tipo': '', 'Moneda': 'USD / CLP',
+                            'Monto Ofertado Original': '', 'Saldo Pendiente': texto_total, 'Estado General': ''
+                        }])
+                        df_show = pd.concat([df_show, total_row], ignore_index=True)
+                        
+                        def style_total_row(row):
+                            if row['NV'] == 'TOTALES':
+                                return ['background-color: #003366; color: white; font-weight: bold'] * len(row)
+                            return [''] * len(row)
+                            
+                        st.dataframe(df_show.style.apply(style_total_row, axis=1), use_container_width=True, hide_index=True)
+                        st.markdown("<br>", unsafe_allow_html=True)
 
-                    st.dataframe(df_pend_display, use_container_width=True, hide_index=True)
+                    st.markdown("---")
+                    mostrar_bloque_backlog(df_pendientes, "🌟 Resumen Global (Todo el Backlog)")
+                    
+                    st.divider()
+                    
+                    df_ssee = df_pendientes[df_pendientes['tipo_servicio'] == 'SSEE']
+                    mostrar_bloque_backlog(df_ssee, "🔹 Backlog SSEE (Subestaciones)")
+                    
+                    df_terreno = df_pendientes[df_pendientes['tipo_servicio'] == 'SE TERRENO']
+                    mostrar_bloque_backlog(df_terreno, "🔸 Backlog SE TERRENO (Faenas)")
+
                 else:
                     st.success("✨ ¡Excelente! No hay servicios con saldo pendiente en tu Backlog.")
 
