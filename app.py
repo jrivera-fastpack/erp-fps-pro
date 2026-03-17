@@ -1211,15 +1211,16 @@ def main_app():
                         color_discrete_sequence=colores_globo
                     )
 
+                    # --- TEXTO EQUILIBRADO: LEGIBLE PERO SIN DESBORDARSE ---
                     fig.update_traces(
                         textposition='inside', 
                         insidetextanchor='middle', 
                         marker_line_width=0, 
                         opacity=0.95, 
-                        width=0.85, 
-                        textfont_size=22, 
+                        width=0.75, 
+                        textfont_size=14, 
                         textfont_color='#000000',
-                        insidetextfont=dict(size=22, color='#000000', family="Arial Black"),
+                        insidetextfont=dict(size=14, color='#000000', family="Arial"),
                         constraintext='none' 
                     )
                     
