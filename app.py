@@ -1086,8 +1086,11 @@ def main_app():
                 }).reset_index()
                 
                 df_grouped = df_grouped.sort_values(by=['id_nv', 'start_ts'], ascending=[True, True])
-                df_grouped['Eje_Y'] = "<b>" + df_grouped['cliente'].str.upper() + " (" + df_grouped['id_nv'] + ")</b><br>" + df_grouped['Labor']
+                
+                # --- MEJORA VISUAL EJE Y: UNA SOLA LÍNEA LIMPIA ---
+                df_grouped['Eje_Y'] = df_grouped['cliente'].str.upper() + " (" + df_grouped['id_nv'] + ") | " + df_grouped['Labor']
                 orden_eje_y = df_grouped['Eje_Y'].unique()
+                
                 df_grouped['Etiqueta_Barra'] = df_grouped['Labor'] + " (" + df_grouped['progreso'].astype(str) + "%)"
                 
                 expanded_rows = []
@@ -1177,10 +1180,13 @@ def main_app():
 
                     fig.update_traces(textposition='inside', insidetextanchor='middle', marker_line_width=0, opacity=0.95, width=0.55, textfont=dict(size=13, color='#333333'))
                     
+                    # --- MEJORA VISUAL EJE Y: FORZAR CATEGORÍAS PARA EVITAR SOLAPAMIENTO ---
                     fig.update_yaxes(
                         autorange="reversed", 
                         title="", 
-                        tickfont=dict(size=13, color='#333'), 
+                        type="category",        
+                        tickmode="linear",      
+                        tickfont=dict(size=11, color='#333'), 
                         gridcolor='rgba(0,0,0,0.05)', 
                         categoryorder='array', 
                         categoryarray=orden_eje_y,
@@ -1225,10 +1231,11 @@ def main_app():
                         automargin=True
                     )
                     
-                    altura_dinamica = max(400, len(df_plot['Eje_Y'].unique()) * 80)
+                    # --- MEJORA VISUAL EJE Y: MARGEN IZQUIERDO Y ESPACIADO ---
+                    altura_dinamica = max(400, len(df_plot['Eje_Y'].unique()) * 40)
                     fig.update_layout(
                         height=altura_dinamica, 
-                        margin=dict(l=250, r=30, t=60, b=80),
+                        margin=dict(l=350, r=30, t=60, b=80), 
                         plot_bgcolor='white', 
                         paper_bgcolor='white', 
                         legend_title_text='', 
