@@ -1620,7 +1620,33 @@ def main_app():
                     m_m = row_nv['Margen']
                     a_p = row_nv['Avance_%']
                     d_p = row_nv['dias_proyectados']
-                    d_e = row_nv['dias_ejecutados']
+                    
+                    # --- NUEVO CÁLCULO DE DÍAS REALES (POR FECHA CALENDARIO TRANSCURRIDA) ---
+                    d_e_transcurridos = 0
+                    df_acts_proyecto = df_hh_raw[df_hh_raw['id_nv'] == row_nv['id_nv']]
+                    
+                    if not df_acts_proyecto.empty:
+                        f_ini_min = pd.to_datetime(df_acts_proyecto['fecha_inicio']).min().date()
+                        f_fin_max = pd.to_datetime(df_acts_proyecto['fecha_fin']).max().date()
+                        hoy = datetime.today().date()
+                        
+                        # Si todo está al 100%, el tiempo se congela en la fecha de término real. Si no, cuenta hasta hoy.
+                        is_completed = df_acts_proyecto['progreso'].min() == 100
+                        limite_conteo = f_fin_max if (is_completed and f_fin_max < hoy) else hoy
+                        
+                        if limite_conteo >= f_ini_min:
+                            curr = f_ini_min
+                            while curr <= limite_conteo:
+                                es_feriado = curr.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
+                                es_finde = curr.weekday() >= 5
+                                # Contamos los días hábiles que han pasado en la realidad
+                                if not (es_finde or es_feriado):
+                                    d_e_transcurridos += 1
+                                curr += timedelta(days=1)
+                                
+                    d_e = float(d_e_transcurridos)
+                    # ------------------------------------------------------------------------
+                    
                     estado_nv = row_nv['estado']
                     
                     fmt_v = f"{mon} ${m_v:,.0f}".replace(",", ".") if mon == 'CLP' else f"{mon} ${m_v:,.2f}"
