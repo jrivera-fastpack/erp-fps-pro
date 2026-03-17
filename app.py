@@ -840,8 +840,12 @@ def main_app():
                             curr_prog = int(df_act['progreso'].max())
                             
                             existing_dias_extras = int(df_act['dias_extras'].max()) if 'dias_extras' in df_act.columns and pd.notna(df_act['dias_extras'].max()) else 0
+                            
+                            # --- LÓGICA DE PAUSA ---
                             just_series = df_act['justificacion'].dropna() if 'justificacion' in df_act.columns else pd.Series()
-                            existing_just = str(just_series.iloc[0]) if not just_series.empty else ""
+                            existing_just_raw = str(just_series.iloc[0]) if not just_series.empty else ""
+                            is_paused = "[PAUSADA]" in existing_just_raw.upper()
+                            existing_just_display = existing_just_raw.replace("[PAUSADA] ", "").replace("[PAUSADA]", "").strip()
                             
                             esps_reales = [e for e in df_act['especialista'].unique() if e != 'Sin Asignar']
                             estado_programacion = df_act['comentarios'].iloc[0] if not df_act.empty else ""
@@ -860,7 +864,9 @@ def main_app():
                                 dias_estimados = max(1, (curr_f_fin - curr_f_ini).days + 1)
                                 is_extras = 'EXTRAS' in df_act['comentarios'].values
                                 
-                                if curr_f_fin < hoy and curr_prog < 100:
+                                if is_paused:
+                                    estado_badge = "⏸️ PAUSADA"
+                                elif curr_f_fin < hoy and curr_prog < 100:
                                     is_atrasada = True
                                     estado_badge = "⚠️ ATRASADA"
                                 else:
@@ -872,11 +878,13 @@ def main_app():
                                     
                                 with st.form(key=f"form_update_{nv_id_sel}_{act}"):
                                     
-                                    if is_atrasada:
-                                        st.error(f"⚠️ El tiempo límite programado ({curr_f_fin.strftime('%d/%m/%Y')}) ya se cumplió. Es obligatorio ingresar una justificación para poder continuar.")
-                                        just_val = st.text_input("Justificación del Atraso (Requerido):", value=existing_just)
+                                    pausar_tarea = st.checkbox("⏸️ Pausar esta actividad (Para no generar alertas de atraso mientras está detenida)", value=is_paused)
+                                    
+                                    if is_atrasada and not is_paused:
+                                        st.error(f"⚠️ El tiempo límite programado ({curr_f_fin.strftime('%d/%m/%Y')}) ya se cumplió. Es obligatorio ingresar una justificación.")
+                                        just_val = st.text_input("Justificación del Atraso (Requerido):", value=existing_just_display)
                                     else:
-                                        just_val = existing_just
+                                        just_val = st.text_input("Justificación o Comentario (Requerido si se pausa):", value=existing_just_display)
                                         
                                     col_p, col_f = st.columns([1, 1.5])
                                     nuevo_p = col_p.slider("Avance Específico %", 0, 100, curr_prog)
@@ -912,9 +920,9 @@ def main_app():
                                     modalidad_turno = col_e.radio("Modalidad de Trabajo", ["Simultáneo (Todos a la vez)", "Contra Turno (Rotativo, ej: 7x7)"], help="En Contra Turno, las horas reales se dividirán equitativamente entre los especialistas seleccionados.")
                                     
                                     if st.form_submit_button("Guardar Programación / Avance", use_container_width=True):
-                                        if is_atrasada and not just_val.strip():
-                                            st.error("❌ OBLIGATORIO: Debe ingresar la justificación por el cual no se cumplió el tiempo programado.")
-                                        elif is_atrasada and dias_trabajo <= dias_estimados and nuevo_p < 100:
+                                        if (is_atrasada or pausar_tarea) and not just_val.strip():
+                                            st.error("❌ OBLIGATORIO: Debe ingresar una justificación si la actividad se atrasa o se pone en pausa.")
+                                        elif is_atrasada and not pausar_tarea and dias_trabajo <= dias_estimados and nuevo_p < 100:
                                             st.error("❌ OBLIGATORIO: Para quitar el estado de atraso debe aumentar la cantidad de 'Días de duración total' o marcar el avance al 100%.")
                                         else:
                                             try:
@@ -928,6 +936,8 @@ def main_app():
                                                     hh_por_persona = hh_base / len(nuevos_esps)
                                                 else:
                                                     hh_por_persona = hh_base
+                                                    
+                                                final_justificacion_db = f"[PAUSADA] {just_val}" if pausar_tarea else just_val
                                                 
                                                 if not nuevos_esps:
                                                     payload = {
@@ -940,7 +950,7 @@ def main_app():
                                                         "comentarios": "EXTRAS" if incluye_finde else "LIBRES", 
                                                         "progreso": nuevo_p,
                                                         "dias_extras": dias_extra_manual, 
-                                                        "justificacion": just_val,
+                                                        "justificacion": final_justificacion_db,
                                                         "hora_inicio_t": h_inicio_val.strftime('%H:%M') if h_inicio_val else '08:00',
                                                         "hora_fin_t": h_fin_val.strftime('%H:%M') if h_fin_val else '17:30',
                                                         "horas_diarias": h_diarias_val if h_diarias_val else 0
@@ -958,7 +968,7 @@ def main_app():
                                                             "comentarios": "EXTRAS" if incluye_finde else "LIBRES", 
                                                             "progreso": nuevo_p,
                                                             "dias_extras": dias_extra_manual, 
-                                                            "justificacion": just_val,
+                                                            "justificacion": final_justificacion_db,
                                                             "hora_inicio_t": h_inicio_val.strftime('%H:%M') if h_inicio_val else '08:00',
                                                             "hora_fin_t": h_fin_val.strftime('%H:%M') if h_fin_val else '17:30',
                                                             "horas_diarias": h_diarias_val if h_diarias_val else 0
@@ -973,8 +983,8 @@ def main_app():
                         st.info("Utilice el panel de la izquierda para definir las actividades del alcance de este proyecto.")
 
         st.divider()
-        st.subheader("3. Trabajos Internos y Administrativos")
-        st.info("Utilice este panel para asignar labores que no pertenecen a un proyecto comercial (ej: informes, capacitaciones, trabajos en taller o nave).")
+        st.subheader("3. Asignación de Trabajos Internos (Taller / Oficina / Cursos)")
+        st.info("Utilice este panel para asignar labores que no pertenecen a un proyecto comercial.")
         
         c_int1, c_int2 = st.columns(2)
         with c_int1:
@@ -1093,21 +1103,30 @@ def main_app():
                 fechas_validas = df_g[df_g['comentarios'] != 'SIN_PROGRAMAR']['start_ts']
                 fecha_base_gantt = fechas_validas.min() if not fechas_validas.empty else (pd.to_datetime(datetime.today().date()) + pd.Timedelta(hours=8))
                 
+                # --- AGREGAR JUSTIFICACIÓN PARA LEER LA PAUSA EN EL GANTT ---
                 df_grouped = df_g.groupby(['id_nv', 'cliente', 'Labor', 'start_ts', 'end_ts', 'progreso', 'comentarios']).agg({
-                    'especialista': lambda x: ", ".join(set(x))
+                    'especialista': lambda x: ", ".join(set(x)),
+                    'justificacion': 'first'
                 }).reset_index()
                 
                 df_grouped = df_grouped.sort_values(by=['id_nv', 'start_ts'], ascending=[True, True])
                 
                 df_grouped['Eje_Y'] = df_grouped['id_nv'] + " | " + df_grouped['Labor']
-                orden_eje_y = df_grouped['Eje_Y'].unique()
-                
-                df_grouped['Etiqueta_Barra'] = "<b>" + df_grouped['Labor'] + " (" + df_grouped['progreso'].astype(str) + "%)</b>"
                 
                 expanded_rows = []
                 for _, row in df_grouped.iterrows():
                     start = row['start_ts']
                     end = row['end_ts']
+                    
+                    is_task_paused = False
+                    if pd.notna(row.get('justificacion')):
+                        is_task_paused = "[PAUSADA]" in str(row['justificacion']).upper()
+                        
+                    base_label = f"{row['Labor']} ({row['progreso']}%)"
+                    if is_task_paused:
+                        row['Etiqueta_Barra'] = f"<b>⏸️ {base_label} (PAUSADA)</b>"
+                    else:
+                        row['Etiqueta_Barra'] = f"<b>{base_label}</b>"
                     
                     if row['comentarios'] == 'SIN_PROGRAMAR':
                         new_row = row.copy()
@@ -1170,12 +1189,15 @@ def main_app():
                     ts_inici = min_ts
                     ts_fi = max_ts
 
+                # --- MEJORA: FILTRAR LIMPIAMENTE Y RECALCULAR EJE Y ---
                 if not df_plot.empty:
                     df_plot = df_plot[(df_plot['end_ts'] >= ts_inici) & (df_plot['start_ts'] <= ts_fi)]
 
                 if df_plot.empty:
                     st.info("No hay actividades programadas en la ventana de tiempo seleccionada.")
                 else:
+                    orden_eje_y = df_plot['Eje_Y'].unique()
+                    
                     colores_globo = ['#3498DB', '#E67E22', '#2ECC71', '#E74C3C', '#9B59B6', '#1ABC9C', '#F1C40F', '#7F8C8D']
 
                     fig = px.timeline(
@@ -1194,10 +1216,10 @@ def main_app():
                         insidetextanchor='middle', 
                         marker_line_width=0, 
                         opacity=0.95, 
-                        width=0.8, # Aún más gruesa
-                        textfont_size=22, # Forzar directamente el tamaño aquí
+                        width=0.85, 
+                        textfont_size=22, 
                         textfont_color='#000000',
-                        insidetextfont=dict(size=22, color='#000000'),
+                        insidetextfont=dict(size=22, color='#000000', family="Arial Black"),
                         constraintext='none' 
                     )
                     
@@ -1251,7 +1273,7 @@ def main_app():
                         automargin=True
                     )
                     
-                    altura_dinamica = max(400, len(df_plot['Eje_Y'].unique()) * 85)
+                    altura_dinamica = max(250, len(orden_eje_y) * 85)
                     fig.update_layout(
                         height=altura_dinamica, 
                         margin=dict(l=250, r=30, t=60, b=80), 
@@ -1330,7 +1352,7 @@ def main_app():
                 df_hh_raw = df_all[(df_all['id_nv'] != 'AUSENCIA') & (df_all['id_nv'] != 'INTERNO') & (df_all['actividad_ssee'] != 'PROYECCION_GLOBAL') & (df_all['comentarios'] != 'SIN_PROGRAMAR')]
                 
                 if not df_hh_raw.empty:
-                    df_hh_raw['horas_diarias_calc'] = df_hh_raw['horas_diarias'].apply(lambda x: float(x) if float(x) > 0 else 9.0)
+                    df_hh_raw['horas_diarias_calc'] = pd.to_numeric(df_hh_raw['horas_diarias'], errors='coerce').fillna(9.0).apply(lambda x: float(x) if float(x) > 0 else 9.0)
                     df_hh_raw['dias_reales_calc'] = df_hh_raw['hh_asignadas'] / df_hh_raw['horas_diarias_calc']
                     
                     df_hh_agg = df_hh_raw.groupby('id_nv')[['hh_asignadas', 'dias_reales_calc']].sum().reset_index()
@@ -1663,8 +1685,13 @@ def main_app():
                                         else:
                                             com_text = f"Estado operativo: {com_text.replace('_', ' ')}"
                                             
-                                    if has_extra_cols and row_c['dias_extras'] > 0:
-                                        com_text += f" | ⚠️ **+{int(row_c['dias_extras'])} días extra** (Motivo: {row_c['justificacion']})"
+                                    is_task_paused = "[PAUSADA]" in str(row_c.get('justificacion', '')).upper()
+                                    just_display = str(row_c.get('justificacion', '')).replace("[PAUSADA] ", "").replace("[PAUSADA]", "").strip()
+                                    
+                                    if is_task_paused:
+                                        com_text = f"⏸️ **PAUSADA** - Motivo: {just_display}"
+                                    elif has_extra_cols and row_c['dias_extras'] > 0:
+                                        com_text += f" | ⚠️ **+{int(row_c['dias_extras'])} días extra** (Motivo: {just_display})"
                                         
                                     st.info(f"**{act_name} ({prog_val}%):** {com_text}")
                             else:
