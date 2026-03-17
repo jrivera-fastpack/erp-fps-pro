@@ -1186,7 +1186,7 @@ def main_app():
                         title="", 
                         type="category",        
                         tickmode="linear",      
-                        tickfont=dict(size=11, color='#333'), 
+                        tickfont=dict(size=14, color='#333', family="Arial"), 
                         gridcolor='rgba(0,0,0,0.05)', 
                         categoryorder='array', 
                         categoryarray=orden_eje_y,
@@ -1232,10 +1232,10 @@ def main_app():
                     )
                     
                     # --- MEJORA VISUAL EJE Y: MARGEN IZQUIERDO Y ESPACIADO ---
-                    altura_dinamica = max(400, len(df_plot['Eje_Y'].unique()) * 40)
+                    altura_dinamica = max(400, len(df_plot['Eje_Y'].unique()) * 70)
                     fig.update_layout(
                         height=altura_dinamica, 
-                        margin=dict(l=350, r=30, t=60, b=80), 
+                        margin=dict(l=450, r=30, t=60, b=80), 
                         plot_bgcolor='white', 
                         paper_bgcolor='white', 
                         legend_title_text='', 
@@ -1395,8 +1395,6 @@ def main_app():
                 _, ultimo_dia = calendar.monthrange(anio_sel, mes_num)
                 fecha_inicio_mes = datetime(anio_sel, mes_num, 1).date()
                 fecha_fin_mes = datetime(anio_sel, mes_num, ultimo_dia).date()
-                
-                df_kpi_mes = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)].copy()
                 
                 dias_habiles_mes = 0
                 curr_d = fecha_inicio_mes
