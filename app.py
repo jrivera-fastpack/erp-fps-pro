@@ -1849,11 +1849,18 @@ def main_app():
                     
                     if asig_all_raw:
                         df_hist = pd.DataFrame(asig_all_raw)
-                        df_hist = df_hist[(df_hist['id_nv'] == nv_id_h) & (df_hist['actividad_ssee'] != 'PROYECCION_GLOBAL') & (df_hist['comentarios'] != 'SIN_PROGRAMAR')]
+                        df_hist = df_hist[(df_hist['id_nv'] == nv_id_h) & (df_hist['actividad_ssee'] != 'PROYECCION_GLOBAL') & (df_hist['comentarios'] != 'SIN_PROGRAMAR')].copy()
                         
                         if not df_hist.empty:
+                            # --- CÁLCULO DE HORAS Y DÍAS POR SEGMENTO ---
+                            df_hist['horas_diarias_calc'] = pd.to_numeric(df_hist['horas_diarias'], errors='coerce').fillna(9.0).apply(lambda x: float(x) if float(x) > 0 else 9.0)
+                            df_hist['hh_asignadas_num'] = pd.to_numeric(df_hist['hh_asignadas'], errors='coerce').fillna(0)
+                            df_hist['dias_hombre'] = df_hist['hh_asignadas_num'] / df_hist['horas_diarias_calc']
+
                             hist_grouped = df_hist.groupby(['actividad_ssee', 'fecha_inicio', 'fecha_fin', 'justificacion', 'progreso']).agg({
-                                'especialista': lambda x: ", ".join([e for e in set(x) if e != 'Sin Asignar'])
+                                'especialista': lambda x: ", ".join([e for e in set(x) if e != 'Sin Asignar']),
+                                'hh_asignadas_num': 'sum',
+                                'dias_hombre': 'sum'
                             }).reset_index()
                             
                             def determinar_estado_historial(row):
@@ -1864,18 +1871,25 @@ def main_app():
                                 
                             hist_grouped['Estado'] = hist_grouped.apply(determinar_estado_historial, axis=1)
                             
+                            # Formateo de los valores numéricos
+                            hist_grouped['hh_asignadas_num'] = hist_grouped['hh_asignadas_num'].apply(lambda x: f"{x:.1f} HH")
+                            hist_grouped['dias_hombre'] = hist_grouped['dias_hombre'].apply(lambda x: f"{x:.1f} Días")
+                            
                             hist_grouped.rename(columns={
                                 'actividad_ssee': 'Labor / Actividad',
                                 'fecha_inicio': 'Fecha Inicio',
                                 'fecha_fin': 'Fecha Fin',
                                 'progreso': 'Avance Reportado (%)',
                                 'justificacion': 'Justificación / Comentario',
-                                'especialista': 'Personal Involucrado'
+                                'especialista': 'Personal Involucrado',
+                                'hh_asignadas_num': 'Horas Utilizadas',
+                                'dias_hombre': 'Días (Cantidad)'
                             }, inplace=True)
                             
                             hist_grouped = hist_grouped.sort_values(by=['Labor / Actividad', 'Fecha Inicio'])
                             
-                            st.dataframe(hist_grouped[['Labor / Actividad', 'Fecha Inicio', 'Fecha Fin', 'Estado', 'Avance Reportado (%)', 'Personal Involucrado', 'Justificación / Comentario']], use_container_width=True, hide_index=True)
+                            # Reordenar columnas para incluir horas y días
+                            st.dataframe(hist_grouped[['Labor / Actividad', 'Fecha Inicio', 'Fecha Fin', 'Estado', 'Avance Reportado (%)', 'Horas Utilizadas', 'Días (Cantidad)', 'Personal Involucrado', 'Justificación / Comentario']], use_container_width=True, hide_index=True)
                         else:
                             st.write("No hay historial de ejecución real registrado para este proyecto. Las labores aún no han iniciado.")
                     else:
