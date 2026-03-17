@@ -1934,6 +1934,13 @@ def main_app():
                 if df_hitos_mes.empty:
                     df_hitos_mes = pd.DataFrame(columns=['id', 'id_nv', 'cliente', 'tipo_servicio', 'moneda', 'porcentaje', 'monto', 'estado', 'monto_usd'])
 
+                # --- PRONÓSTICO AUTOMÁTICO DE EJECUCIÓN (CORRECCIÓN DE BUG AQUÍ) ---
+                df_all_valid_asig = pd.DataFrame()
+                if asig_all_raw:
+                    df_temp_asig = pd.DataFrame(asig_all_raw)
+                    # Excluimos AUSENCIA, INTERNO y tareas SIN PROGRAMAR
+                    df_all_valid_asig = df_temp_asig[(df_temp_asig['id_nv'] != 'AUSENCIA') & (df_temp_asig['id_nv'] != 'INTERNO') & (df_temp_asig['comentarios'] != 'SIN_PROGRAMAR')]
+
                 if not df_all_valid_asig.empty:
                     df_max_fin = df_all_valid_asig.groupby('id_nv')['fecha_fin'].max().reset_index()
                     df_max_fin['fecha_fin'] = pd.to_datetime(df_max_fin['fecha_fin']).dt.date
