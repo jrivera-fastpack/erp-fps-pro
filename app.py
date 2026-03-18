@@ -1160,9 +1160,12 @@ def main_app():
                     if pd.notna(row.get('justificacion')):
                         is_task_paused = "[PAUSADA]" in str(row['justificacion']).upper()
                         
-                    base_label = f"{row['id_nv']} ({row['progreso']}%)"
+                    # --- MEJORA VISUAL PARA 1 DÍA: EXTRAER SOLO EL NÚMERO DE NV CORTO ---
+                    short_nv = str(row['id_nv']).split(' - ')[0].strip()
+                    base_label = f"{short_nv} ({row['progreso']}%)"
+                    
                     if is_task_paused:
-                        row['Etiqueta_Barra'] = f"<b>⏸️ {base_label} (PAUSADA)</b>"
+                        row['Etiqueta_Barra'] = f"<b>⏸️ {base_label}</b>"
                     else:
                         row['Etiqueta_Barra'] = f"<b>{base_label}</b>"
                     
@@ -1443,6 +1446,13 @@ def main_app():
             df_kpi['monto_gasto_ajustado'] = df_kpi.apply(lambda row: row['monto_gasto'] / tasa_cambio if row['moneda'] == 'USD' else row['monto_gasto'], axis=1)
             df_kpi['Margen'] = df_kpi['monto_vendido'] - df_kpi['monto_gasto_ajustado']
 
+            # --- PRONÓSTICO AUTOMÁTICO DE EJECUCIÓN (GLOBAL PARA PESTAÑAS) ---
+            df_all_valid_asig = pd.DataFrame()
+            if asig_all_raw:
+                df_temp_asig = pd.DataFrame(asig_all_raw)
+                # Excluimos AUSENCIA, INTERNO y tareas SIN PROGRAMAR
+                df_all_valid_asig = df_temp_asig[(df_temp_asig['id_nv'] != 'AUSENCIA') & (df_temp_asig['id_nv'] != 'INTERNO') & (df_temp_asig['comentarios'] != 'SIN_PROGRAMAR')]
+
             año_actual = datetime.today().year
             mes_actual = datetime.today().month
             lista_anios = list(range(año_actual - 2, año_actual + 2))
@@ -1458,13 +1468,14 @@ def main_app():
             
             df_kpi_mes = df_kpi[(df_kpi['fecha_creacion'] >= fecha_inicio_mes) & (df_kpi['fecha_creacion'] <= fecha_fin_mes)].copy()
 
-            tab_global, tab_individual, tab_ocupacion, tab_historial, tab_tabla, tab_pendientes = st.tabs([
+            tab_global, tab_individual, tab_ocupacion, tab_historial, tab_tabla, tab_pendientes, tab_proyeccion = st.tabs([
                 "🌍 Global Mensual", 
                 "🔍 Análisis Individual", 
                 "👥 Ocupación Personal",
                 "📅 Historial y Trazabilidad",
                 "📋 Tabla y Facturación", 
-                "⏳ Pendientes (Backlog)"
+                "⏳ Pendientes (Backlog)",
+                "📈 Proyección Anual"
             ])
 
             with tab_global:
@@ -1958,13 +1969,6 @@ def main_app():
                 if df_hitos_mes.empty:
                     df_hitos_mes = pd.DataFrame(columns=['id', 'id_nv', 'cliente', 'tipo_servicio', 'moneda', 'porcentaje', 'monto', 'estado', 'monto_usd'])
 
-                # --- PRONÓSTICO AUTOMÁTICO DE EJECUCIÓN (CORRECCIÓN DE BUG AQUÍ) ---
-                df_all_valid_asig = pd.DataFrame()
-                if asig_all_raw:
-                    df_temp_asig = pd.DataFrame(asig_all_raw)
-                    # Excluimos AUSENCIA, INTERNO y tareas SIN PROGRAMAR
-                    df_all_valid_asig = df_temp_asig[(df_temp_asig['id_nv'] != 'AUSENCIA') & (df_temp_asig['id_nv'] != 'INTERNO') & (df_temp_asig['comentarios'] != 'SIN_PROGRAMAR')]
-
                 if not df_all_valid_asig.empty:
                     df_max_fin = df_all_valid_asig.groupby('id_nv')['fecha_fin'].max().reset_index()
                     df_max_fin['fecha_fin'] = pd.to_datetime(df_max_fin['fecha_fin']).dt.date
@@ -2267,6 +2271,92 @@ def main_app():
 
                 else:
                     st.success("✨ ¡Excelente! No hay servicios con saldo pendiente en tu Backlog.")
+
+            # --- NUEVA PESTAÑA: PROYECCIÓN ANUAL ---
+            with tab_proyeccion:
+                st.subheader("📈 Proyección de Facturación (Tentativa)")
+                st.info("Este gráfico agrupa la facturación esperada por mes, combinando los Hitos Programados explícitamente y el Pronóstico Automático de los proyectos que finalizan según la Carta Gantt. Todo expresado en Dólares (USD) para uniformidad.")
+                
+                df_chart_hitos = df_hitos.copy()
+                if not df_chart_hitos.empty:
+                    df_chart_hitos = df_chart_hitos.merge(df_kpi[['id_nv', 'moneda']], on='id_nv', how='left')
+                    df_chart_hitos['monto_usd'] = df_chart_hitos.apply(lambda r: r['monto'] if r['moneda'] == 'USD' else r['monto'] / tasa_cambio, axis=1)
+                    df_chart_hitos['Tipo'] = 'Hito Programado'
+                else:
+                    df_chart_hitos = pd.DataFrame(columns=['mes', 'anio', 'monto_usd', 'Tipo'])
+
+                auto_rows = []
+                if not df_all_valid_asig.empty:
+                    df_max_fin_all = df_all_valid_asig.groupby('id_nv')['fecha_fin'].max().reset_index()
+                    df_kpi_auto_all = df_kpi.merge(df_max_fin_all, on='id_nv', how='inner')
+                    
+                    for _, r_auto in df_kpi_auto_all.iterrows():
+                        has_hitos_ever = not df_hitos[df_hitos['id_nv'] == r_auto['id_nv']].empty
+                        if not has_hitos_ever and r_auto['estado_facturacion'] != 'Facturada':
+                            monto_pend = r_auto['monto_pendiente']
+                            if monto_pend > 0:
+                                m_usd = monto_pend if r_auto['moneda'] == 'USD' else monto_pend / tasa_cambio
+                                fin_dt = pd.to_datetime(r_auto['fecha_fin'])
+                                auto_rows.append({
+                                    'mes': fin_dt.month,
+                                    'anio': fin_dt.year,
+                                    'monto_usd': m_usd,
+                                    'Tipo': 'Pronóstico Automático'
+                                })
+                df_chart_auto = pd.DataFrame(auto_rows)
+                
+                df_chart_full = pd.DataFrame()
+                if not df_chart_hitos.empty and not df_chart_auto.empty:
+                    df_chart_full = pd.concat([df_chart_hitos[['mes', 'anio', 'monto_usd', 'Tipo']], df_chart_auto], ignore_index=True)
+                elif not df_chart_hitos.empty:
+                    df_chart_full = df_chart_hitos[['mes', 'anio', 'monto_usd', 'Tipo']].copy()
+                elif not df_chart_auto.empty:
+                    df_chart_full = df_chart_auto.copy()
+
+                if not df_chart_full.empty:
+                    df_chart_full['anio'] = df_chart_full['anio'].astype(int)
+                    df_chart_full['mes'] = df_chart_full['mes'].astype(int)
+                    df_chart_full['Periodo_Ord'] = df_chart_full.apply(lambda r: f"{r['anio']}-{r['mes']:02d}", axis=1)
+                    
+                    df_chart_full = df_chart_full.sort_values(by=['anio', 'mes'])
+                    
+                    def format_mes_anio(row):
+                        return f"{MESES_ES[int(row['mes'])]} {int(row['anio'])}"
+                        
+                    df_chart_full['Mes/Año'] = df_chart_full.apply(format_mes_anio, axis=1)
+                    
+                    df_grouped_chart = df_chart_full.groupby(['Periodo_Ord', 'Mes/Año', 'Tipo'])['monto_usd'].sum().reset_index()
+                    df_grouped_chart = df_grouped_chart.sort_values(by=['Periodo_Ord'])
+                    orden_x = df_grouped_chart['Mes/Año'].unique()
+                    
+                    fig_proj = px.bar(
+                        df_grouped_chart,
+                        x='Mes/Año',
+                        y='monto_usd',
+                        color='Tipo',
+                        text='monto_usd',
+                        color_discrete_map={'Hito Programado': '#2ECC71', 'Pronóstico Automático': '#3498DB'}
+                    )
+                    
+                    fig_proj.update_traces(texttemplate='USD $%{text:,.0f}', textposition='inside', insidetextfont=dict(color='white', size=14, weight='bold'))
+                    fig_proj.update_layout(
+                        yaxis_title="Monto a Facturar (USD)", 
+                        xaxis_title="", 
+                        plot_bgcolor='white', 
+                        barmode='stack',
+                        legend_title_text='Origen de la Facturación'
+                    )
+                    fig_proj.update_xaxes(categoryorder='array', categoryarray=orden_x)
+                    
+                    st.plotly_chart(fig_proj, use_container_width=True)
+                    
+                    st.markdown("**Desglose Total Proyectado**")
+                    df_pivot = df_grouped_chart.groupby(['Periodo_Ord', 'Mes/Año'])['monto_usd'].sum().reset_index()
+                    df_pivot['Monto Total (USD)'] = df_pivot['monto_usd'].apply(lambda x: f"USD ${x:,.2f}")
+                    df_pivot['Monto Estimado (CLP)'] = df_pivot['monto_usd'].apply(lambda x: f"CLP ${(x * tasa_cambio):,.0f}".replace(",", "."))
+                    st.dataframe(df_pivot[['Mes/Año', 'Monto Total (USD)', 'Monto Estimado (CLP)']], use_container_width=True, hide_index=True)
+                else:
+                    st.info("No hay datos de facturación proyectada para mostrar.")
 
     # ==========================================
     # MÓDULO 5: CIERRE Y PDF ANALÍTICO
