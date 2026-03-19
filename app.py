@@ -483,7 +483,7 @@ def main_app():
                     nv_data = opciones_admin[nv_a_editar_label]
                     
                     with st.form("form_edit_nv"):
-                        st.text_input("ID Nota de Venta (No editable)", value=nv_data['id_nv'], disabled=True)
+                        st.text_input("ID Nota de Venta (No editable)", value=nv_data['id_nv'], disabled=True, help="El ID es el identificador principal y no se puede modificar. Si necesita cambiarlo, elimine el registro y créelo nuevamente.")
                         new_cliente = st.text_input("Cliente", value=nv_data['cliente'])
                         new_tipo = st.selectbox("Tipo de Servicio", ["SSEE", "SE TERRENO"], index=0 if nv_data['tipo_servicio'] == 'SSEE' else 1)
                         new_lugar = st.text_input("Lugar / Faena", value=nv_data.get('lugar', ''))
@@ -853,50 +853,70 @@ def main_app():
             
             with c_asig:
                 st.subheader("1. Alcance del Proyecto")
-                st.info("Defina qué labores componen este proyecto. Estas actividades entrarán a la bolsa de 'Ajustes Vivos' para ser programadas posteriormente.")
+                st.info("Gestione las labores que componen este proyecto. Puede agregar nuevas o eliminar las existentes.")
                 nv_label_sel = st.selectbox("Proyecto (NV - Cliente)", list(dict_nvs_label.keys()))
                 nv_data_sel = dict_nvs_label[nv_label_sel]
                 nv_id_sel = nv_data_sel['id_nv']
                 
-                with st.form("form_alcance"):
-                    if nv_data_sel['tipo_servicio'] == "SSEE":
-                        actividades_sel = st.multiselect("Agregar Actividades al Alcance", list(ABREVIATURAS.keys()))
-                    else:
-                        act_custom = st.text_input("Nombre de la Actividad en Terreno")
-                        actividades_sel = [act_custom] if act_custom else []
-                    
-                    if st.form_submit_button("Añadir al Alcance"):
-                        if actividades_sel:
-                            try:
-                                existing = supabase.table("asignaciones_personal").select("actividad_ssee").eq("id_nv", nv_id_sel).execute().data
-                                existing_acts = [e['actividad_ssee'] for e in existing if e['actividad_ssee'] != 'PROYECCION_GLOBAL']
-                                
-                                agregadas = 0
-                                for act in actividades_sel:
-                                    if act not in existing_acts:
-                                        p_asig = {
-                                            "id_nv": nv_id_sel, 
-                                            "especialista": "Sin Asignar", 
-                                            "fecha_inicio": str(datetime.today().date()), 
-                                            "fecha_fin": str(datetime.today().date()), 
-                                            "hh_asignadas": 0, 
-                                            "actividad_ssee": act, 
-                                            "comentarios": "SIN_PROGRAMAR", 
-                                            "progreso": 0,
-                                            "hora_inicio_t": '08:00',
-                                            "hora_fin_t": '17:30',
-                                            "horas_diarias": 0
-                                        }
-                                        safe_insert_asignacion(p_asig)
-                                        agregadas += 1
-                                
-                                if agregadas > 0:
-                                    st.success(f"✅ {agregadas} actividades añadidas a la bolsa de ajuste.")
+                tab_alc_add, tab_alc_del = st.tabs(["➕ Añadir Labor", "🗑️ Eliminar Labor"])
+                
+                with tab_alc_add:
+                    with st.form("form_alcance"):
+                        if nv_data_sel['tipo_servicio'] == "SSEE":
+                            actividades_sel = st.multiselect("Agregar Actividades al Alcance", list(ABREVIATURAS.keys()))
+                        else:
+                            act_custom = st.text_input("Nombre de la Actividad en Terreno")
+                            actividades_sel = [act_custom] if act_custom else []
+                        
+                        if st.form_submit_button("Añadir al Alcance"):
+                            if actividades_sel:
+                                try:
+                                    existing = supabase.table("asignaciones_personal").select("actividad_ssee").eq("id_nv", nv_id_sel).execute().data
+                                    existing_acts = [e['actividad_ssee'] for e in existing if e['actividad_ssee'] != 'PROYECCION_GLOBAL']
+                                    
+                                    agregadas = 0
+                                    for act in actividades_sel:
+                                        if act not in existing_acts:
+                                            p_asig = {
+                                                "id_nv": nv_id_sel, 
+                                                "especialista": "Sin Asignar", 
+                                                "fecha_inicio": str(datetime.today().date()), 
+                                                "fecha_fin": str(datetime.today().date()), 
+                                                "hh_asignadas": 0, 
+                                                "actividad_ssee": act, 
+                                                "comentarios": "SIN_PROGRAMAR", 
+                                                "progreso": 0,
+                                                "hora_inicio_t": '08:00',
+                                                "hora_fin_t": '17:30',
+                                                "horas_diarias": 0
+                                            }
+                                            safe_insert_asignacion(p_asig)
+                                            agregadas += 1
+                                    
+                                    if agregadas > 0:
+                                        st.success(f"✅ {agregadas} actividades añadidas a la bolsa de ajuste.")
+                                        st.rerun()
+                                    else:
+                                        st.warning("⚠️ Las actividades seleccionadas ya existen en el alcance.")
+                                except Exception as e:
+                                    st.error(f"❌ Error al añadir labores: {e}")
+                                    
+                with tab_alc_del:
+                    existing_for_del = supabase.table("asignaciones_personal").select("actividad_ssee").eq("id_nv", nv_id_sel).neq("actividad_ssee", "PROYECCION_GLOBAL").execute().data
+                    if existing_for_del:
+                        unique_acts = list(set([e['actividad_ssee'] for e in existing_for_del]))
+                        with st.form("form_del_alcance"):
+                            act_to_delete = st.selectbox("Seleccione la Labor a Eliminar", unique_acts)
+                            st.warning("⚠️ Cuidado: Esto borrará todo el historial, tiempos y avance de esta labor de la base de datos.")
+                            if st.form_submit_button("🗑️ Eliminar Labor Definitivamente"):
+                                try:
+                                    supabase.table("asignaciones_personal").delete().eq("id_nv", nv_id_sel).eq("actividad_ssee", act_to_delete).execute()
+                                    st.success(f"✅ Labor '{act_to_delete}' eliminada exitosamente.")
                                     st.rerun()
-                                else:
-                                    st.warning("⚠️ Las actividades seleccionadas ya existen en el alcance.")
-                            except Exception as e:
-                                st.error(f"❌ Error al añadir labores: {e}")
+                                except Exception as e:
+                                    st.error(f"❌ Error al eliminar labor: {e}")
+                    else:
+                        st.info("No hay labores asignadas a este proyecto.")
 
             with c_prog:
                 st.subheader("2. Programación Viva y Avances")
@@ -2231,376 +2251,4 @@ def main_app():
                             
                             with st.form("form_add_hito"):
                                 c_hm, c_ha, c_hp = st.columns(3)
-                                h_mes = c_hm.selectbox("Mes de Facturación", list(MESES_ES.values()))
-                                h_anio = c_ha.selectbox("Año", lista_anios, index=lista_anios.index(año_actual))
-                                
-                                if modo_ingreso == "Porcentaje del Saldo (%)":
-                                    h_val = c_hp.number_input("Porcentaje (%) a cobrar", min_value=0.1, max_value=100.0, step=1.0, value=100.0)
-                                else:
-                                    if moneda_h == 'CLP':
-                                        h_val = c_hp.text_input("Monto a cobrar (CLP)", value=f"{int(monto_restante)}", help="Puede usar puntos para miles.")
-                                    else:
-                                        h_val = c_hp.number_input("Monto a cobrar (USD)", min_value=0.01, max_value=float(monto_restante), step=100.0, value=float(monto_restante))
-                                
-                                if st.form_submit_button("Agregar Hito de Cobro", use_container_width=True):
-                                    mes_n = list(MESES_ES.keys())[list(MESES_ES.values()).index(h_mes)]
-                                    
-                                    monto_calc = 0.0
-                                    if modo_ingreso == "Porcentaje del Saldo (%)":
-                                        monto_calc = (h_val / 100.0) * monto_restante
-                                    else:
-                                        if moneda_h == 'CLP':
-                                            m_clean = str(h_val).replace(".", "").replace(",", "").strip()
-                                            monto_calc = float(m_clean) if m_clean.isdigit() else 0.0
-                                        else:
-                                            monto_calc = float(h_val)
-                                    
-                                    if round(monto_calc, 2) > round(monto_restante, 2):
-                                        st.error(f"❌ El monto calculado ({monto_calc:,.2f}) supera el saldo restante permitido ({monto_restante:,.2f}).")
-                                    elif monto_calc <= 0:
-                                        st.error("❌ El monto debe ser mayor a 0.")
-                                    else:
-                                        pct_sobre_total = (monto_calc / monto_tot_h) * 100 if monto_tot_h > 0 else 0
-                                        
-                                        try:
-                                            supabase.table("hitos_facturacion").insert({
-                                                "id_nv": id_nv_h,
-                                                "mes": mes_n,
-                                                "anio": h_anio,
-                                                "porcentaje": pct_sobre_total,
-                                                "monto": monto_calc,
-                                                "estado": "Pendiente"
-                                            }).execute()
-                                            st.success("Hito de facturación agregado exitosamente.")
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"❌ Error de BD: {e}")
-                        else:
-                            st.success("✅ El 100% de este proyecto ya ha sido planificado en hitos.")
-
-            with tab_pendientes:
-                st.subheader("Servicios Pendientes (Backlog de Facturación y Ejecución)")
-                st.info("Aquí se listan todos los proyectos que tienen un saldo pendiente por facturar, descontando automáticamente las parcialidades ya facturadas.")
-                
-                df_pendientes = df_kpi[df_kpi['monto_pendiente'] > 0].copy()
-                
-                if not df_pendientes.empty:
-                    df_pendientes['monto_usd_est'] = df_pendientes.apply(lambda row: row['monto_pendiente'] if row['moneda'] == 'USD' else row['monto_pendiente'] / tasa_cambio, axis=1)
-                    
-                    def mostrar_bloque_backlog(df_sub, titulo):
-                        if df_sub.empty:
-                            return
-                        
-                        st.markdown(f"#### {titulo}")
-                        total_usd = df_sub['monto_usd_est'].sum()
-                        total_clp = total_usd * tasa_cambio
-                        
-                        c_m1, c_m2 = st.columns(2)
-                        c_m1.metric("Total Pendiente (USD)", f"USD ${total_usd:,.2f}")
-                        c_m2.metric("Total Pendiente (CLP)", f"CLP ${total_clp:,.0f}".replace(",", "."))
-                        
-                        cols_pend = ['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'monto_vendido', 'monto_pendiente', 'estado_facturacion']
-                        df_show = df_sub[cols_pend].rename(columns={
-                            'id_nv': 'NV', 'cliente': 'Cliente', 'tipo_servicio': 'Tipo', 
-                            'moneda': 'Moneda', 'monto_vendido': 'Monto Ofertado Original',
-                            'monto_pendiente': 'Saldo Pendiente', 'estado_facturacion': 'Estado General'
-                        })
-                        
-                        def format_currency_backlog(val, mon):
-                            if pd.isna(val) or val == '': return ''
-                            if isinstance(val, str) and ('/' in val or 'USD' in val or 'CLP' in val): return val
-                            try:
-                                v = float(val)
-                            except Exception:
-                                return val
-                            if mon == 'USD':
-                                return f"USD ${v:,.2f}"
-                            return f"CLP ${v:,.0f}".replace(",", ".")
-                            
-                        df_show['Monto Ofertado Original'] = df_show.apply(lambda x: format_currency_backlog(x['Monto Ofertado Original'], x['Moneda']), axis=1)
-                        df_show['Saldo Pendiente'] = df_show.apply(lambda x: format_currency_backlog(x['Saldo Pendiente'], x['Moneda']), axis=1)
-                        
-                        str_tot_usd = f"USD ${total_usd:,.2f}"
-                        str_tot_clp = f"CLP ${total_clp:,.0f}".replace(",", ".")
-                        texto_total = f"{str_tot_usd}   /   {str_tot_clp}"
-                        
-                        total_row = pd.DataFrame([{
-                            'NV': 'TOTALES', 'Cliente': '', 'Tipo': '', 'Moneda': 'USD / CLP',
-                            'Monto Ofertado Original': '', 'Saldo Pendiente': texto_total, 'Estado General': ''
-                        }])
-                        df_show = pd.concat([df_show, total_row], ignore_index=True)
-                        
-                        def style_total_row(row):
-                            if row['NV'] == 'TOTALES':
-                                return ['background-color: #003366; color: white; font-weight: bold'] * len(row)
-                            return [''] * len(row)
-                            
-                        st.dataframe(df_show.style.apply(style_total_row, axis=1), use_container_width=True, hide_index=True)
-                        st.markdown("<br>", unsafe_allow_html=True)
-
-                    st.markdown("---")
-                    mostrar_bloque_backlog(df_pendientes, "🌟 Resumen Global (Todo el Backlog)")
-                    
-                    st.divider()
-                    
-                    df_ssee = df_pendientes[df_pendientes['tipo_servicio'] == 'SSEE']
-                    mostrar_bloque_backlog(df_ssee, "🔹 Backlog SSEE (Salas Eléctricas)")
-                    
-                    df_terreno = df_pendientes[df_pendientes['tipo_servicio'] == 'SE TERRENO']
-                    mostrar_bloque_backlog(df_terreno, "🔸 Backlog SE TERRENO (Faenas)")
-
-                else:
-                    st.success("✨ ¡Excelente! No hay servicios con saldo pendiente en tu Backlog.")
-
-            with tab_proyeccion:
-                st.subheader("📈 Proyección de Facturación Anual")
-                st.info("Este gráfico agrupa la facturación esperada por mes, combinando los Hitos Programados explícitamente y el Pronóstico Automático de los proyectos que finalizan según la Carta Gantt.")
-                
-                df_chart_hitos = df_hitos.copy()
-                if not df_chart_hitos.empty:
-                    df_chart_hitos = df_chart_hitos.merge(df_kpi[['id_nv', 'moneda']], on='id_nv', how='left')
-                    df_chart_hitos['monto_clp'] = df_chart_hitos.apply(lambda r: r['monto'] if r['moneda'] == 'CLP' else r['monto'] * tasa_cambio, axis=1)
-                    df_chart_hitos['Tipo'] = df_chart_hitos['estado'].apply(lambda x: 'Facturación Finalizada a la Fecha' if x == 'Facturada' else 'Proyectado (Tentativo)')
-                else:
-                    df_chart_hitos = pd.DataFrame(columns=['mes', 'anio', 'monto_clp', 'Tipo'])
-
-                auto_rows = []
-                if not df_all_valid_asig.empty:
-                    df_max_fin_all = df_all_valid_asig.groupby('id_nv')['fecha_fin'].max().reset_index()
-                    df_kpi_auto_all = df_kpi.merge(df_max_fin_all, on='id_nv', how='inner')
-                    
-                    for _, r_auto in df_kpi_auto_all.iterrows():
-                        has_hitos_ever = not df_hitos[df_hitos['id_nv'] == r_auto['id_nv']].empty
-                        if not has_hitos_ever and r_auto['estado_facturacion'] != 'Facturada':
-                            monto_pend = r_auto['monto_pendiente']
-                            if monto_pend > 0:
-                                m_clp = monto_pend if r_auto['moneda'] == 'CLP' else monto_pend * tasa_cambio
-                                fin_dt = pd.to_datetime(r_auto['fecha_fin'])
-                                auto_rows.append({
-                                    'mes': fin_dt.month,
-                                    'anio': fin_dt.year,
-                                    'monto_clp': m_clp,
-                                    'Tipo': 'Proyectado (Tentativo)'
-                                })
-                df_chart_auto = pd.DataFrame(auto_rows)
-                
-                df_chart_full = pd.DataFrame()
-                if not df_chart_hitos.empty and not df_chart_auto.empty:
-                    df_chart_full = pd.concat([df_chart_hitos[['mes', 'anio', 'monto_clp', 'Tipo']], df_chart_auto], ignore_index=True)
-                elif not df_chart_hitos.empty:
-                    df_chart_full = df_chart_hitos[['mes', 'anio', 'monto_clp', 'Tipo']].copy()
-                elif not df_chart_auto.empty:
-                    df_chart_full = df_chart_auto.copy()
-
-                if not df_chart_full.empty:
-                    df_chart_full['anio'] = df_chart_full['anio'].astype(int)
-                    df_chart_full['mes'] = df_chart_full['mes'].astype(int)
-                    df_chart_full['Periodo_Ord'] = df_chart_full.apply(lambda r: f"{r['anio']}-{r['mes']:02d}", axis=1)
-                    
-                    df_chart_full = df_chart_full.sort_values(by=['anio', 'mes'])
-                    
-                    def format_mes_anio(row):
-                        return f"{MESES_ES[int(row['mes'])]} {int(row['anio'])}"
-                        
-                    df_chart_full['Mes/Año'] = df_chart_full.apply(format_mes_anio, axis=1)
-                    
-                    df_grouped_chart = df_chart_full.groupby(['Periodo_Ord', 'Mes/Año', 'Tipo'])['monto_clp'].sum().reset_index()
-                    df_grouped_chart = df_grouped_chart.sort_values(by=['Periodo_Ord'])
-                    orden_x = df_grouped_chart['Mes/Año'].unique()
-                    
-                    fig_proj = px.bar(
-                        df_grouped_chart,
-                        x='Mes/Año',
-                        y='monto_clp',
-                        color='Tipo',
-                        text='monto_clp',
-                        color_discrete_map={'Facturación Finalizada a la Fecha': '#2ECC71', 'Proyectado (Tentativo)': '#3498DB'}
-                    )
-                    
-                    fig_proj.update_traces(texttemplate='$%{text:,.0f}', textposition='inside', insidetextfont=dict(color='white', size=14, weight='bold'))
-                    
-                    # --- LÍNEA DE META NARANJA (110 MILLONES CLP) ---
-                    meta_clp = 110000000
-                    fig_proj.add_hline(
-                        y=meta_clp, 
-                        line_dash="dash", 
-                        line_color="#FF6600", 
-                        line_width=3,
-                        annotation_text="Meta Mensual ($110M CLP)", 
-                        annotation_position="top left",
-                        annotation_font_size=16,
-                        annotation_font_color="#FF6600"
-                    )
-
-                    fig_proj.update_layout(
-                        yaxis_title="Monto (CLP)", 
-                        xaxis_title="", 
-                        plot_bgcolor='white', 
-                        barmode='stack',
-                        legend_title_text='Estado de la Facturación'
-                    )
-                    fig_proj.update_xaxes(categoryorder='array', categoryarray=orden_x)
-                    
-                    st.plotly_chart(fig_proj, use_container_width=True)
-                    
-                    st.markdown("**Desglose Total Proyectado**")
-                    df_pivot = df_grouped_chart.groupby(['Periodo_Ord', 'Mes/Año'])['monto_clp'].sum().reset_index()
-                    df_pivot['Monto Estimado (USD)'] = df_pivot['monto_clp'].apply(lambda x: f"USD ${(x / tasa_cambio):,.2f}")
-                    df_pivot['Monto Total (CLP)'] = df_pivot['monto_clp'].apply(lambda x: f"CLP ${x:,.0f}".replace(",", "."))
-                    st.dataframe(df_pivot[['Mes/Año', 'Monto Total (CLP)', 'Monto Estimado (USD)']], use_container_width=True, hide_index=True)
-                else:
-                    st.info("No hay datos de facturación proyectada para mostrar.")
-
-            with tab_facturados:
-                st.subheader("✅ Historial de Servicios Facturados")
-                st.info("Aquí se listan todas las parcialidades o hitos que ya han sido marcados como 'Facturada' en el sistema, organizados por mes.")
-                
-                df_hitos_fact = df_hitos[df_hitos['estado'] == 'Facturada'].copy()
-                
-                if not df_hitos_fact.empty:
-                    df_hitos_fact = df_hitos_fact.merge(df_kpi[['id_nv', 'cliente', 'tipo_servicio', 'moneda']], on='id_nv', how='left')
-                    df_hitos_fact['monto_usd_est'] = df_hitos_fact.apply(lambda r: r['monto'] if r['moneda'] == 'USD' else r['monto'] / tasa_cambio, axis=1)
-                    
-                    # Ordenar por año y mes descendente
-                    df_hitos_fact = df_hitos_fact.sort_values(by=['anio', 'mes'], ascending=[False, False])
-                    
-                    # Formatear el mes
-                    df_hitos_fact['Mes_Txt'] = df_hitos_fact['mes'].apply(lambda x: MESES_ES.get(int(x), str(x)))
-                    df_hitos_fact['Periodo'] = df_hitos_fact['Mes_Txt'] + " " + df_hitos_fact['anio'].astype(str)
-                    
-                    periodos = df_hitos_fact['Periodo'].unique()
-                    
-                    for periodo in periodos:
-                        st.markdown(f"#### 📅 {periodo}")
-                        df_per = df_hitos_fact[df_hitos_fact['Periodo'] == periodo].copy()
-                        
-                        tot_usd = df_per['monto_usd_est'].sum()
-                        tot_clp = tot_usd * tasa_cambio
-                        
-                        c1, c2 = st.columns(2)
-                        c1.metric(f"Total Facturado en {periodo} (USD)", f"USD ${tot_usd:,.2f}")
-                        c2.metric(f"Total Facturado en {periodo} (CLP)", f"CLP ${tot_clp:,.0f}".replace(",", "."))
-                        
-                        df_show = df_per[['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'porcentaje', 'monto']].copy()
-                        df_show.rename(columns={
-                            'id_nv': 'NV', 'cliente': 'Cliente', 'tipo_servicio': 'Tipo', 
-                            'moneda': 'Moneda', 'porcentaje': '% Cobrado', 'monto': 'Monto Facturado'
-                        }, inplace=True)
-                        
-                        def format_facturado(val, mon):
-                            if mon == 'USD': return f"USD ${val:,.2f}"
-                            return f"CLP ${val:,.0f}".replace(",", ".")
-                            
-                        df_show['Monto Facturado'] = df_show.apply(lambda x: format_facturado(x['Monto Facturado'], x['Moneda']), axis=1)
-                        df_show['% Cobrado'] = df_show['% Cobrado'].apply(lambda x: f"{x:.1f}%")
-                        
-                        st.dataframe(df_show, use_container_width=True, hide_index=True)
-                        st.markdown("<hr style='margin: 10px 0; opacity: 0.3;'>", unsafe_allow_html=True)
-                else:
-                    st.success("Aún no hay servicios marcados como facturados en el sistema.")
-
-    # ==========================================
-    # MÓDULO 5: CIERRE Y PDF ANALÍTICO
-    # ==========================================
-    with tab5:
-        st.header("Cierre Técnico y Reporte")
-        if 'pdf_bytes' not in st.session_state: st.session_state.pdf_bytes = None
-        if 'nv_cerrada' not in st.session_state: st.session_state.nv_cerrada = None
-
-        if nvs_activas:
-            nv_c_label = st.selectbox("Proyecto para Cerrar", [f"{n['id_nv']} - {n['cliente']}" for n in nvs_activas])
-            nv_c_id = nv_c_label.split(" - ")[0]
-
-            if st.button("🔴 CERRAR Y GENERAR REPORTE PDF"):
-                try:
-                    info_nv = next(n for n in nvs_activas if n['id_nv'] == nv_c_id)
-                    asig_list_raw = supabase.table("asignaciones_personal").select("*").eq("id_nv", nv_c_id).execute().data
-                    
-                    asig_list = [a for a in asig_list_raw if a.get('actividad_ssee') != 'PROYECCION_GLOBAL'] if asig_list_raw else []
-                    
-                    gastos_list = supabase.table("control_gastos").select("*").eq("id_nv", nv_c_id).execute().data
-                    
-                    sum_hh = sum(a['hh_asignadas'] for a in asig_list) if asig_list else 0
-                    dias_ejecutados = sum_hh / 9.0
-                    sum_gas_bruto = sum(g['monto_gasto'] for g in gastos_list) if gastos_list else 0
-                    
-                    if asig_list:
-                        df_avances = pd.DataFrame(asig_list)
-                        suma_progreso = df_avances.groupby('actividad_ssee')['progreso'].max().sum()
-                        if info_nv['tipo_servicio'] == 'SSEE':
-                            avg_prog = suma_progreso / len(ABREVIATURAS)
-                        else:
-                            avg_prog = df_avances.groupby('actividad_ssee')['progreso'].max().mean()
-                    else:
-                        avg_prog = 0
-                        
-                    moneda = info_nv.get('moneda', 'CLP')
-                    dias_ofertados = info_nv.get('hh_vendidas', 0)
-                    
-                    sum_gas_real = sum_gas_bruto / tasa_cambio if moneda == 'USD' else sum_gas_bruto
-
-                    df_pdf = pd.DataFrame({"Concepto": ["Presupuesto", "Gasto Real"], "Monto": [info_nv['monto_vendido'], sum_gas_real]})
-                    fig_pdf = px.bar(df_pdf, x="Concepto", y="Monto", color="Concepto", color_discrete_map={"Presupuesto": "#003366", "Gasto Real": "#FF6600"})
-                    
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                        fig_pdf.write_image(tmp.name, engine="kaleido")
-                        path_img = tmp.name
-
-                    pdf = FPDF()
-                    pdf.add_page()
-                    pdf.set_font("Arial", 'B', 20)
-                    pdf.set_text_color(0, 51, 102)
-                    pdf.cell(0, 15, "REPORTE EJECUTIVO DE CIERRE - COORDINACIÓN FPS", ln=True, align='C')
-                    pdf.ln(5)
-                    
-                    # Formateo correcto en PDF (puntos para CLP)
-                    fmt_v_pdf = f"{info_nv['monto_vendido']:,.0f}".replace(",", ".") if moneda == 'CLP' else f"{info_nv['monto_vendido']:,.2f}"
-                    fmt_g_pdf = f"{sum_gas_real:,.0f}".replace(",", ".") if moneda == 'CLP' else f"{sum_gas_real:,.2f}"
-                    
-                    pdf.set_font("Arial", '', 12)
-                    pdf.set_text_color(0, 0, 0)
-                    pdf.cell(0, 10, f"Proyecto: {nv_c_id} | Cliente: {info_nv['cliente']}", ln=True)
-                    pdf.cell(0, 10, f"Lugar: {info_nv['lugar']} | Avance Final: {avg_prog:.1f}%", ln=True)
-                    pdf.cell(0, 10, f"Días Ofertados: {dias_ofertados} | Días Ejecutados (Aprox): {dias_ejecutados:.1f}", ln=True)
-                    pdf.cell(0, 10, f"Finanzas: {moneda} ${fmt_v_pdf} Ofertado | {moneda} ${fmt_g_pdf} Gastado", ln=True)
-                    if moneda == 'USD':
-                        pdf.set_font("Arial", 'I', 9)
-                        pdf.cell(0, 5, f"(Nota: Gastos convertidos usando tasa de cambio de {tasa_cambio} CLP/USD)", ln=True)
-                    
-                    pdf.image(path_img, x=25, y=pdf.get_y()+5, w=160)
-                    
-                    pdf.add_page()
-                    pdf.set_font("Arial", 'B', 14)
-                    pdf.cell(0, 10, "DETALLE DE OPERACIONES EJECUTADAS", ln=True)
-                    pdf.set_font("Arial", '', 10)
-                    
-                    if asig_list:
-                        for act, group in df_avances.groupby('actividad_ssee'):
-                            prog = group['progreso'].max()
-                            esp_list = ", ".join(group['especialista'].unique())
-                            linea = f"> {act} ({prog}%) | Técnicos: {esp_list}"
-                            pdf.cell(0, 8, linea.encode('latin-1', 'replace').decode('latin-1'), ln=True)
-                    
-                    st.session_state.pdf_bytes = pdf.output(dest='S').encode('latin-1', 'replace')
-                    st.session_state.nv_cerrada = nv_c_id
-                    os.remove(path_img)
-                    
-                    supabase.table("notas_venta").update({"estado":"Cerrada"}).eq("id_nv", nv_c_id).execute()
-                    st.success("✅ Proyecto cerrado exitosamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Ocurrió un error procesando el cierre: {e}")
-
-        if st.session_state.pdf_bytes:
-            st.download_button(
-                label=f"⬇️ Descargar Reporte {st.session_state.nv_cerrada}", 
-                data=st.session_state.pdf_bytes, 
-                file_name=f"Reporte_Cierre_{st.session_state.nv_cerrada}.pdf", 
-                mime="application/pdf"
-            )
-
-# --- CONTROLADOR DE VISTAS ---
-if not st.session_state.authenticated:
-    login_screen()
-else:
-    main_app()
+                                h_mes = c_hm.
