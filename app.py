@@ -285,7 +285,6 @@ def main_app():
                             c_f1, c_f2 = st.columns(2)
                             f_ini = c_f1.date_input("Fecha Inicio", format="DD/MM/YYYY")
                             
-                            # PROTECCIÓN PARA EVITAR StreamlitValueBelowMinError
                             val_dias_db = float(nv_data_sel.get('hh_vendidas', 5.0))
                             val_min_seguro = val_dias_db if val_dias_db >= 1.0 else 1.0
                             
@@ -627,9 +626,11 @@ def main_app():
                         os, oe = max(fi, f_i_m), min(ff, f_f_m)
                         if os <= oe:
                             inc = 'EXTRAS' in str(a.get('comentarios', '')).upper()
-                            tot_p += sum(1 for i in range((oe - os).days + 1) if inc or ((os+timedelta(days=i)).weekday() < 5 and (os+timedelta(days=i)).strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026))
-                            re = min(oe, hoy)
-                            if os <= re: tot_e += sum(1 for i in range((re - os).days + 1) if inc or ((os+timedelta(days=i)).weekday() < 5 and (os+timedelta(days=i)).strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026))
+                            if a.get('actividad_ssee') == 'PROYECCION_GLOBAL':
+                                tot_p += sum(1 for i in range((oe - os).days + 1) if inc or ((os+timedelta(days=i)).weekday() < 5 and (os+timedelta(days=i)).strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026))
+                            else:
+                                re = min(oe, hoy)
+                                if os <= re: tot_e += sum(1 for i in range((re - os).days + 1) if inc or ((os+timedelta(days=i)).weekday() < 5 and (os+timedelta(days=i)).strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026))
                 
                 c1, c2 = st.columns(2)
                 c1.metric("Cartera Ofertada (USD)", f"USD ${sum(r['monto_vendido'] if r['moneda']=='USD' else r['monto_vendido']/tasa_cambio for _,r in df_k.iterrows()):,.2f}")
