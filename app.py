@@ -195,7 +195,6 @@ def calcular_hh_ssee(f_ini, f_fin, incluye_finde=False, horas_diarias=None):
     return hh
 
 def obtener_nvs(estado_filter=None):
-    # Excluye RRHH pero incluye los proyectos INTERNOS para poder editarlos en la Pestaña 3
     query = supabase.table("notas_venta").select("*").neq("id_nv", "AUSENCIA")
     if estado_filter: query = query.eq("estado", estado_filter)
     return query.execute().data
@@ -483,7 +482,7 @@ def main_app():
                     nv_data = opciones_admin[nv_a_editar_label]
                     
                     with st.form("form_edit_nv"):
-                        st.text_input("ID Nota de Venta (No editable)", value=nv_data['id_nv'], disabled=True, help="El ID es el identificador principal y no se puede modificar. Si necesita cambiarlo, elimine el registro y créelo nuevamente.")
+                        st.text_input("ID Nota de Venta (No editable)", value=nv_data['id_nv'], disabled=True)
                         new_cliente = st.text_input("Cliente", value=nv_data['cliente'])
                         new_tipo = st.selectbox("Tipo de Servicio", ["SSEE", "SE TERRENO"], index=0 if nv_data['tipo_servicio'] == 'SSEE' else 1)
                         new_lugar = st.text_input("Lugar / Faena", value=nv_data.get('lugar', ''))
@@ -544,9 +543,9 @@ def main_app():
     with tab2:
         st.header("Matriz de Recursos (Proyección Global)")
         
-        nvs_activas = obtener_nvs("Abierta")
-        if nvs_activas:
-            dict_nvs_label = {f"{n['id_nv']} - {n['cliente']}": n for n in nvs_activas}
+        nvs_activas_comercial = [n for n in obtener_nvs("Abierta") if n['id_nv'] != "INTERNO"]
+        if nvs_activas_comercial:
+            dict_nvs_label = {f"{n['id_nv']} - {n['cliente']}": n for n in nvs_activas_comercial}
             
             col_exp1, col_exp2 = st.columns(2)
             
@@ -1438,11 +1437,10 @@ def main_app():
             df_kpi['monto_gasto_ajustado'] = df_kpi.apply(lambda row: row['monto_gasto'] / tasa_cambio if row['moneda'] == 'USD' else row['monto_gasto'], axis=1)
             df_kpi['Margen'] = df_kpi['monto_vendido'] - df_kpi['monto_gasto_ajustado']
 
-            # --- PRONÓSTICO AUTOMÁTICO DE EJECUCIÓN (GLOBAL PARA PESTAÑAS) ---
+            # --- PRONÓSTICO AUTOMÁTICO DE EJECUCIÓN ---
             df_all_valid_asig = pd.DataFrame()
             if asig_all_raw:
                 df_temp_asig = pd.DataFrame(asig_all_raw)
-                # Excluimos AUSENCIA, INTERNO y tareas SIN PROGRAMAR
                 df_all_valid_asig = df_temp_asig[(df_temp_asig['id_nv'] != 'AUSENCIA') & (df_temp_asig['id_nv'] != 'INTERNO') & (df_temp_asig['comentarios'] != 'SIN_PROGRAMAR')]
 
             año_actual = datetime.today().year
@@ -1487,7 +1485,6 @@ def main_app():
                     for _, row_aus in df_ausencias.iterrows():
                         d_ini = pd.to_datetime(row_aus['fecha_inicio']).date()
                         d_fin = pd.to_datetime(row_aus['fecha_fin']).date()
-                        
                         c_date = max(d_ini, fecha_inicio_mes)
                         e_date = min(d_fin, fecha_fin_mes)
                         while c_date <= e_date:
@@ -1497,58 +1494,47 @@ def main_app():
                 
                 capacidad_neta_mes = int(capacidad_total_teorica - dias_ausencia_mes)
                 
-                total_dias_proyectados = 0.0
-                total_dias_ejecutados = 0.0
+                # --- NUEVA LÓGICA DE TIEMPOS ULTRA PRECISA ---
+                total_dias_proyectados = 0.0 # Tareas con fechas que existen en el Gantt
+                total_dias_ejecutados = 0.0  # Tareas del Gantt contabilizadas solo hasta HOY
+                hoy_limite = datetime.today().date()
                 
-                if asig_all_raw:
-                    for a in asig_all_raw:
-                        if a.get('id_nv') == 'AUSENCIA' or a.get('id_nv') == 'INTERNO' or a.get('comentarios') == 'SIN_PROGRAMAR':
-                            continue
-                            
-                        try:
-                            f_i_a = pd.to_datetime(a['fecha_inicio']).date()
-                            f_f_a = pd.to_datetime(a['fecha_fin']).date()
-                        except:
-                            continue
+                if not df_all_valid_asig.empty:
+                    for _, a in df_all_valid_asig.iterrows():
+                        if pd.isna(a['fecha_inicio']) or pd.isna(a['fecha_fin']): continue
                         
+                        f_i_a = pd.to_datetime(a['fecha_inicio']).date()
+                        f_f_a = pd.to_datetime(a['fecha_fin']).date()
+                        
+                        # Filtro 1: ¿Cae dentro de este mes?
                         overlap_start = max(f_i_a, fecha_inicio_mes)
                         overlap_end = min(f_f_a, fecha_fin_mes)
                         
                         if overlap_start <= overlap_end:
                             incluye_f = (a.get('comentarios') == 'EXTRAS' or 'Extras' in str(a.get('comentarios','')))
                             
-                            dias_overlap = 0
+                            # Contar Días Planificados en Gantt para el mes
                             curr = overlap_start
                             while curr <= overlap_end:
                                 es_feriado = curr.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
                                 es_finde = curr.weekday() >= 5
                                 if incluye_f or (not es_finde and not es_feriado):
-                                    dias_overlap += 1
+                                    total_dias_proyectados += 1
                                 curr += timedelta(days=1)
                                 
-                            if a.get('actividad_ssee') == 'PROYECCION_GLOBAL':
-                                total_dias_proyectados += dias_overlap
-                            else:
-                                dias_totales_tarea = 0
-                                curr_tot = f_i_a
-                                while curr_tot <= f_f_a:
-                                    es_feriado = curr_tot.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
-                                    es_finde = curr_tot.weekday() >= 5
+                            # Contar Días Ejecutados Reales a la Fecha (Cortar en HOY)
+                            real_end = min(overlap_end, hoy_limite)
+                            if overlap_start <= real_end:
+                                curr = overlap_start
+                                while curr <= real_end:
+                                    es_feriado = curr.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
+                                    es_finde = curr.weekday() >= 5
                                     if incluye_f or (not es_finde and not es_feriado):
-                                        dias_totales_tarea += 1
-                                    curr_tot += timedelta(days=1)
-                                    
-                                ratio = dias_overlap / dias_totales_tarea if dias_totales_tarea > 0 else 0
-                                hh_asignadas_total = float(a.get('hh_asignadas', 0))
-                                hh_en_mes = hh_asignadas_total * ratio
-                                
-                                horas_diarias_asig = float(a.get('horas_diarias', 0))
-                                if horas_diarias_asig <= 0: horas_diarias_asig = 9.0
-                                
-                                total_dias_ejecutados += (hh_en_mes / horas_diarias_asig)
+                                        total_dias_ejecutados += 1
+                                    curr += timedelta(days=1)
 
-                total_dias_proyectados = int(round(total_dias_proyectados))
-                total_dias_ejecutados = int(round(total_dias_ejecutados))
+                total_dias_proyectados = int(total_dias_proyectados)
+                total_dias_ejecutados = int(total_dias_ejecutados)
                 
                 if df_kpi_mes.empty and total_dias_ejecutados == 0 and total_dias_proyectados == 0:
                     st.info(f"No hay proyectos comerciales operando durante {mes_sel_global} de {anio_sel_global}.")
@@ -1571,15 +1557,16 @@ def main_app():
                     c_graf1, c_graf2 = st.columns(2)
                     
                     with c_graf1:
+                        # --- GRÁFICO ACTUALIZADO (LIMPIO Y PRECISO) ---
                         df_tiempos = pd.DataFrame({
-                            "Concepto": ["Días Totales del Equipo", "Días Planificados (Matriz Semanal)", "Días Reales Ejecutados (Gantt)"],
+                            "Concepto": ["Días Totales del Equipo", "Días Planificados (Carta Gantt)", "Días Reales Ejecutados (Gantt)"],
                             "Cantidad": [capacidad_neta_mes, total_dias_proyectados, total_dias_ejecutados]
                         })
                         fig_tiempos = px.bar(
                             df_tiempos, x="Concepto", y="Cantidad", color="Concepto", text="Cantidad",
                             color_discrete_map={
                                 "Días Totales del Equipo": "#95A5A6", 
-                                "Días Planificados (Matriz Semanal)": "#3498DB", 
+                                "Días Planificados (Carta Gantt)": "#3498DB", 
                                 "Días Reales Ejecutados (Gantt)": "#2ECC71"
                             },
                             title=f"Balance de Tiempos Operativos y Capacidad de {mes_sel_global} {anio_sel_global}"
@@ -1623,7 +1610,6 @@ def main_app():
                     a_p = row_nv['Avance_%']
                     d_p = row_nv['dias_proyectados']
                     
-                    # --- NUEVO CÁLCULO DE DÍAS REALES (POR FECHA CALENDARIO TRANSCURRIDA SIN HUECOS) ---
                     d_e_transcurridos = 0
                     df_acts_proyecto = df_hh_raw[df_hh_raw['id_nv'] == row_nv['id_nv']]
                     
@@ -1637,20 +1623,18 @@ def main_app():
                             comentarios = str(row_act.get('comentarios', ''))
                             incluye_f = 'EXTRAS' in comentarios.upper()
                             
-                            # Recorremos solo los días de este bloque de trabajo específico hasta el día de hoy
                             curr = f_i
                             while curr <= f_f and curr <= hoy:
                                 es_feriado = curr.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
                                 es_finde = curr.weekday() >= 5
                                 
                                 if incluye_f or (not es_finde and not es_feriado):
-                                    fechas_activas.add(curr) # Usamos set() para no contar el mismo día 2 veces si hay varios técnicos
+                                    fechas_activas.add(curr) 
                                 curr += timedelta(days=1)
                                 
                         d_e_transcurridos = len(fechas_activas)
                                 
                     d_e = float(d_e_transcurridos)
-                    # ------------------------------------------------------------------------
                     
                     estado_nv = row_nv['estado']
                     
@@ -1777,15 +1761,23 @@ def main_app():
 
             with tab_ocupacion:
                 st.subheader(f"👥 Ocupación de Personal - {mes_sel_global} {anio_sel_global}")
-                st.info("Esta herramienta calcula qué porcentaje del mes cada técnico estuvo ocupado en terreno, descontando sus días de ausencia/vacaciones.")
+                
+                # --- NUEVO FILTRO PARA LA TABLA DE OCUPACIÓN ---
+                filtro_ocup = st.radio("Filtrar Análisis por Área:", ["🌐 Global (Total)", "⚡ SSEE", "👷 SE Terreno", "🏢 Oficina / Interno"], horizontal=True)
                 
                 dias_del_mes = [fecha_inicio_mes + timedelta(days=i) for i in range((fecha_fin_mes - fecha_inicio_mes).days + 1)]
                 dias_habiles_totales = sum(1 for d in dias_del_mes if d.weekday() < 5 and d.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026)
                 
+                mapa_tipo_servicio = {n['id_nv']: n['tipo_servicio'] for n in nvs_todas} if nvs_todas else {}
+                mapa_tipo_servicio['INTERNO'] = 'INTERNO'
+                mapa_tipo_servicio['AUSENCIA'] = 'AUSENCIA'
+                
                 data_ocupacion = []
                 
                 for esp in ESPECIALISTAS:
-                    dias_ocupados = 0
+                    dias_ssee = 0
+                    dias_terreno = 0
+                    dias_interno = 0
                     dias_ausente = 0
                     
                     asigs_esp = [a for a in asig_all_raw if a.get('especialista') == esp] if asig_all_raw else []
@@ -1794,7 +1786,7 @@ def main_app():
                         es_feriado = d.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
                         es_finde = d.weekday() >= 5
                         
-                        estado_dia = "Disponible" if not (es_finde or es_feriado) else "Libre"
+                        asignacion_del_dia = None
                         
                         for a in asigs_esp:
                             try:
@@ -1808,68 +1800,60 @@ def main_app():
                                 if not incluye_f and (es_finde or es_feriado):
                                     continue
                                 
-                                if a.get('id_nv') == 'AUSENCIA':
-                                    estado_dia = "Ausente"
-                                    break 
-                                elif a.get('comentarios') != 'SIN_PROGRAMAR':
-                                    estado_dia = "Ocupado"
+                                if a.get('comentarios') != 'SIN_PROGRAMAR':
+                                    asignacion_del_dia = a.get('id_nv')
+                                    if asignacion_del_dia == 'AUSENCIA': 
+                                        break # Ausencia pisa todo
                         
-                        if estado_dia == "Ocupado":
-                            dias_ocupados += 1
-                        elif estado_dia == "Ausente":
-                            dias_ausente += 1
+                        if asignacion_del_dia:
+                            tipo_asignacion = mapa_tipo_servicio.get(asignacion_del_dia)
+                            if tipo_asignacion == 'AUSENCIA': dias_ausente += 1
+                            elif tipo_asignacion == 'INTERNO': dias_interno += 1
+                            elif tipo_asignacion == 'SSEE': dias_ssee += 1
+                            elif tipo_asignacion == 'SE TERRENO': dias_terreno += 1
                             
-                    dias_libres_habiles = 0
-                    for d in dias_del_mes:
-                        es_feriado = d.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
-                        es_finde = d.weekday() >= 5
-                        if not (es_finde or es_feriado):
-                            ocupado_o_ausente = False
-                            for a in asigs_esp:
-                                try:
-                                    f_i = pd.to_datetime(a['fecha_inicio']).date()
-                                    f_f = pd.to_datetime(a['fecha_fin']).date()
-                                except:
-                                    continue
-                                if f_i <= d <= f_f:
-                                    incluye_f = (a.get('comentarios') == 'EXTRAS' or 'Extras' in str(a.get('comentarios','')))
-                                    if a.get('comentarios') != 'SIN_PROGRAMAR':
-                                        ocupado_o_ausente = True
-                                        break
-                            if not ocupado_o_ausente:
-                                dias_libres_habiles += 1
-
-                    pct_ocupacion = (dias_ocupados / dias_habiles_totales * 100) if dias_habiles_totales > 0 else 0
+                    dias_ocupados_totales = dias_ssee + dias_terreno + dias_interno
+                    dias_libres = dias_habiles_totales - dias_ocupados_totales - dias_ausente
+                    if dias_libres < 0: dias_libres = 0 # Corrección si trabajó extras fin de semana
+                    
+                    # Filtro de lógica visual para el gráfico
+                    dias_graficar = dias_ocupados_totales
+                    if filtro_ocup == "⚡ SSEE": dias_graficar = dias_ssee
+                    elif filtro_ocup == "👷 SE Terreno": dias_graficar = dias_terreno
+                    elif filtro_ocup == "🏢 Oficina / Interno": dias_graficar = dias_interno
+                    
+                    pct_ocupacion = (dias_graficar / dias_habiles_totales * 100) if dias_habiles_totales > 0 else 0
                     
                     data_ocupacion.append({
                         "Especialista": esp,
-                        "Días Ocupado": dias_ocupados,
+                        "Días Trabajados (Según Filtro)": dias_graficar,
+                        "Días SSEE": dias_ssee,
+                        "Días SE Terreno": dias_terreno,
+                        "Días Oficina": dias_interno,
                         "Días Ausente": dias_ausente,
-                        "Días Disponibles (Hábiles)": dias_libres_habiles,
-                        "% Ocupación Real": round(pct_ocupacion, 1)
+                        "Días Libres": dias_libres,
+                        "% Ocupación": round(pct_ocupacion, 1)
                     })
                 
                 df_oc = pd.DataFrame(data_ocupacion)
-                df_oc_sorted = df_oc.sort_values(by="% Ocupación Real", ascending=False)
+                df_oc_sorted = df_oc.sort_values(by="% Ocupación", ascending=False)
                 
                 fig_oc = px.bar(
                     df_oc_sorted, 
                     x="Especialista", 
-                    y=["Días Ocupado", "Días Ausente", "Días Disponibles (Hábiles)"],
-                    title=f"Distribución de Tiempos por Técnico - {mes_sel_global} {anio_sel_global}",
+                    y=["Días Trabajados (Según Filtro)", "Días Libres"],
+                    title=f"Distribución de Tiempos por Técnico - {mes_sel_global} {anio_sel_global} ({filtro_ocup})",
                     color_discrete_map={
-                        "Días Ocupado": "#3498DB", 
-                        "Días Ausente": "#E74C3C", 
-                        "Días Disponibles (Hábiles)": "#2ECC71"
+                        "Días Trabajados (Según Filtro)": "#3498DB", 
+                        "Días Libres": "#2ECC71"
                     }
                 )
                 fig_oc.update_layout(yaxis_title="Cantidad de Días en el Mes", plot_bgcolor='white', barmode='stack', legend_title_text="Estado")
                 st.plotly_chart(fig_oc, use_container_width=True)
                 
-                st.markdown("**Tabla Detallada de Ocupación**")
-                
-                df_oc_sorted['% Ocupación Real'] = df_oc_sorted['% Ocupación Real'].apply(lambda x: f"{x:.1f}%")
-                st.dataframe(df_oc_sorted, use_container_width=True, hide_index=True)
+                st.markdown("**Tabla General Detallada (Todas las Métricas)**")
+                df_oc_sorted['% Ocupación'] = df_oc_sorted['% Ocupación'].apply(lambda x: f"{x:.1f}%")
+                st.dataframe(df_oc_sorted.drop(columns=['Días Trabajados (Según Filtro)']), use_container_width=True, hide_index=True)
 
             with tab_historial:
                 st.subheader("📅 Historial de Ejecución y Trazabilidad")
@@ -1927,6 +1911,7 @@ def main_app():
 
             with tab_tabla:
                 st.subheader("Tabla General y Control de Facturación Mensual")
+                st.info("Esta sección consolida la facturación tentativa exclusivamente del mes seleccionado.")
                 
                 st.markdown(f"### 💸 Pronóstico de Facturación Activa para {mes_sel_global} {anio_sel_global}")
                 
@@ -2243,17 +2228,18 @@ def main_app():
                 else:
                     st.success("✨ ¡Excelente! No hay servicios con saldo pendiente en tu Backlog.")
 
+            # --- NUEVA PESTAÑA: PROYECCIÓN ANUAL ---
             with tab_proyeccion:
-                st.subheader("📈 Proyección de Facturación (Tentativa)")
-                st.info("Este gráfico agrupa la facturación esperada por mes, combinando los Hitos Programados explícitamente y el Pronóstico Automático de los proyectos que finalizan según la Carta Gantt. Todo expresado en Dólares (USD) para uniformidad.")
+                st.subheader("📈 Proyección de Facturación Anual")
+                st.info("Este gráfico agrupa la facturación esperada por mes, combinando los Hitos Programados explícitamente y el Pronóstico Automático de los proyectos que finalizan según la Carta Gantt.")
                 
                 df_chart_hitos = df_hitos.copy()
                 if not df_chart_hitos.empty:
                     df_chart_hitos = df_chart_hitos.merge(df_kpi[['id_nv', 'moneda']], on='id_nv', how='left')
-                    df_chart_hitos['monto_usd'] = df_chart_hitos.apply(lambda r: r['monto'] if r['moneda'] == 'USD' else r['monto'] / tasa_cambio, axis=1)
-                    df_chart_hitos['Tipo'] = 'Hito Programado'
+                    df_chart_hitos['monto_clp'] = df_chart_hitos.apply(lambda r: r['monto'] if r['moneda'] == 'CLP' else r['monto'] * tasa_cambio, axis=1)
+                    df_chart_hitos['Tipo'] = df_chart_hitos['estado'].apply(lambda x: 'Facturación Finalizada a la Fecha' if x == 'Facturada' else 'Proyectado (Tentativo)')
                 else:
-                    df_chart_hitos = pd.DataFrame(columns=['mes', 'anio', 'monto_usd', 'Tipo'])
+                    df_chart_hitos = pd.DataFrame(columns=['mes', 'anio', 'monto_clp', 'Tipo'])
 
                 auto_rows = []
                 if not df_all_valid_asig.empty:
@@ -2265,21 +2251,21 @@ def main_app():
                         if not has_hitos_ever and r_auto['estado_facturacion'] != 'Facturada':
                             monto_pend = r_auto['monto_pendiente']
                             if monto_pend > 0:
-                                m_usd = monto_pend if r_auto['moneda'] == 'USD' else monto_pend / tasa_cambio
+                                m_clp = monto_pend if r_auto['moneda'] == 'CLP' else monto_pend * tasa_cambio
                                 fin_dt = pd.to_datetime(r_auto['fecha_fin'])
                                 auto_rows.append({
                                     'mes': fin_dt.month,
                                     'anio': fin_dt.year,
-                                    'monto_usd': m_usd,
-                                    'Tipo': 'Pronóstico Automático'
+                                    'monto_clp': m_clp,
+                                    'Tipo': 'Proyectado (Tentativo)'
                                 })
                 df_chart_auto = pd.DataFrame(auto_rows)
                 
                 df_chart_full = pd.DataFrame()
                 if not df_chart_hitos.empty and not df_chart_auto.empty:
-                    df_chart_full = pd.concat([df_chart_hitos[['mes', 'anio', 'monto_usd', 'Tipo']], df_chart_auto], ignore_index=True)
+                    df_chart_full = pd.concat([df_chart_hitos[['mes', 'anio', 'monto_clp', 'Tipo']], df_chart_auto], ignore_index=True)
                 elif not df_chart_hitos.empty:
-                    df_chart_full = df_chart_hitos[['mes', 'anio', 'monto_usd', 'Tipo']].copy()
+                    df_chart_full = df_chart_hitos[['mes', 'anio', 'monto_clp', 'Tipo']].copy()
                 elif not df_chart_auto.empty:
                     df_chart_full = df_chart_auto.copy()
 
@@ -2295,36 +2281,50 @@ def main_app():
                         
                     df_chart_full['Mes/Año'] = df_chart_full.apply(format_mes_anio, axis=1)
                     
-                    df_grouped_chart = df_chart_full.groupby(['Periodo_Ord', 'Mes/Año', 'Tipo'])['monto_usd'].sum().reset_index()
+                    df_grouped_chart = df_chart_full.groupby(['Periodo_Ord', 'Mes/Año', 'Tipo'])['monto_clp'].sum().reset_index()
                     df_grouped_chart = df_grouped_chart.sort_values(by=['Periodo_Ord'])
                     orden_x = df_grouped_chart['Mes/Año'].unique()
                     
                     fig_proj = px.bar(
                         df_grouped_chart,
                         x='Mes/Año',
-                        y='monto_usd',
+                        y='monto_clp',
                         color='Tipo',
-                        text='monto_usd',
-                        color_discrete_map={'Hito Programado': '#2ECC71', 'Pronóstico Automático': '#3498DB'}
+                        text='monto_clp',
+                        color_discrete_map={'Facturación Finalizada a la Fecha': '#2ECC71', 'Proyectado (Tentativo)': '#3498DB'}
                     )
                     
-                    fig_proj.update_traces(texttemplate='USD $%{text:,.0f}', textposition='inside', insidetextfont=dict(color='white', size=14, weight='bold'))
+                    fig_proj.update_traces(texttemplate='$%{text:,.0f}', textposition='inside', insidetextfont=dict(color='white', size=14, weight='bold'))
+                    
+                    # --- LÍNEA DE META NARANJA (110 MILLONES CLP) ---
+                    meta_clp = 110000000
+                    fig_proj.add_hline(
+                        y=meta_clp, 
+                        line_dash="dash", 
+                        line_color="#FF6600", 
+                        line_width=3,
+                        annotation_text="Meta Mensual ($110M CLP)", 
+                        annotation_position="top left",
+                        annotation_font_size=16,
+                        annotation_font_color="#FF6600"
+                    )
+
                     fig_proj.update_layout(
-                        yaxis_title="Monto a Facturar (USD)", 
+                        yaxis_title="Monto (CLP)", 
                         xaxis_title="", 
                         plot_bgcolor='white', 
                         barmode='stack',
-                        legend_title_text='Origen de la Facturación'
+                        legend_title_text='Estado de la Facturación'
                     )
                     fig_proj.update_xaxes(categoryorder='array', categoryarray=orden_x)
                     
                     st.plotly_chart(fig_proj, use_container_width=True)
                     
                     st.markdown("**Desglose Total Proyectado**")
-                    df_pivot = df_grouped_chart.groupby(['Periodo_Ord', 'Mes/Año'])['monto_usd'].sum().reset_index()
-                    df_pivot['Monto Total (USD)'] = df_pivot['monto_usd'].apply(lambda x: f"USD ${x:,.2f}")
-                    df_pivot['Monto Estimado (CLP)'] = df_pivot['monto_usd'].apply(lambda x: f"CLP ${(x * tasa_cambio):,.0f}".replace(",", "."))
-                    st.dataframe(df_pivot[['Mes/Año', 'Monto Total (USD)', 'Monto Estimado (CLP)']], use_container_width=True, hide_index=True)
+                    df_pivot = df_grouped_chart.groupby(['Periodo_Ord', 'Mes/Año'])['monto_clp'].sum().reset_index()
+                    df_pivot['Monto Estimado (USD)'] = df_pivot['monto_clp'].apply(lambda x: f"USD ${(x / tasa_cambio):,.2f}")
+                    df_pivot['Monto Total (CLP)'] = df_pivot['monto_clp'].apply(lambda x: f"CLP ${x:,.0f}".replace(",", "."))
+                    st.dataframe(df_pivot[['Mes/Año', 'Monto Total (CLP)', 'Monto Estimado (USD)']], use_container_width=True, hide_index=True)
                 else:
                     st.info("No hay datos de facturación proyectada para mostrar.")
 
