@@ -544,7 +544,6 @@ def main_app():
     with tab2:
         st.header("Matriz de Recursos (Proyección Global)")
         
-        # Filtro exclusivo de matriz comercial
         nvs_activas_comercial = [n for n in obtener_nvs("Abierta") if n['id_nv'] != "INTERNO"]
         if nvs_activas_comercial:
             dict_nvs_label = {f"{n['id_nv']} - {n['cliente']}": n for n in nvs_activas_comercial}
@@ -836,11 +835,9 @@ def main_app():
                         hoy = datetime.today().date()
                         
                         for act in actividades_unicas:
-                            # --- LÓGICA DE TRAZABILIDAD Y MÚLTIPLES SEGMENTOS ---
                             df_act_raw = df_temp[df_temp['key_grupo'] == act].copy()
                             df_act_raw['fecha_inicio_dt'] = pd.to_datetime(df_act_raw['fecha_inicio'])
                             
-                            # Encontrar siempre el segmento más reciente para editar
                             latest_start = df_act_raw['fecha_inicio_dt'].max()
                             df_latest = df_act_raw[df_act_raw['fecha_inicio_dt'] == latest_start]
                             
@@ -897,7 +894,6 @@ def main_app():
                                     
                                     col_d, col_e = st.columns(2)
                                     
-                                    # Lógica dinámica según la acción seleccionada
                                     if accion_seleccionada == "⏸️ Pausar Actividad":
                                         st.info("Al pausar, se congelará el bloque de trabajo actual hasta la fecha indicada para no marcar atraso.")
                                         f_ini = curr_f_ini
@@ -911,7 +907,7 @@ def main_app():
                                         dias_trabajo = col_d.number_input("Días de trabajo restantes para terminar", min_value=1, value=dias_estimados)
                                         just_val = st.text_input("Comentario (Opcional):", value="")
                                         
-                                    else: # Actualizaciones normales
+                                    else: 
                                         if is_atrasada:
                                             st.error(f"⚠️ El tiempo programado ({curr_f_fin.strftime('%d/%m/%Y')}) ya se cumplió. Obligatorio justificar.")
                                         f_ini = col_f.date_input("Fecha Inicio", value=curr_f_ini, format="DD/MM/YYYY")
@@ -961,7 +957,6 @@ def main_app():
                                                     for rid in ids_latest:
                                                         supabase.table("asignaciones_personal").delete().eq("id", rid).execute()
                                                         
-                                                # Asegurar consistencia de progreso en todos los segmentos históricos
                                                 supabase.table("asignaciones_personal").update({"progreso": nuevo_p}).eq("id_nv", nv_id_sel).eq("actividad_ssee", act).execute()
                                                 
                                                 incluye_finde = True if "Extras" in extras else False
@@ -1152,7 +1147,6 @@ def main_app():
                     start = row['start_ts']
                     end = row['end_ts']
                     
-                    # --- AUTO-LIMPIEZA: IGNORAR TAREAS SIN PROGRAMAR ---
                     if row['comentarios'] == 'SIN_PROGRAMAR':
                         continue 
                     
@@ -1160,7 +1154,6 @@ def main_app():
                     if pd.notna(row.get('justificacion')):
                         is_task_paused = "[PAUSADA]" in str(row['justificacion']).upper()
                         
-                    # --- MEJORA VISUAL PARA 1 DÍA: EXTRAER SOLO EL NÚMERO DE NV CORTO ---
                     short_nv = str(row['id_nv']).split(' - ')[0].strip()
                     base_label = f"{short_nv} ({row['progreso']}%)"
                     
@@ -1222,7 +1215,6 @@ def main_app():
                     ts_inici = min_ts
                     ts_fi = max_ts
 
-                # --- FILTRADO ESTRICTO DE VENTANA (AUTO-ELIMINA EJES Y VACÍOS) ---
                 if not df_plot.empty:
                     df_plot = df_plot[(df_plot['end_ts'] >= ts_inici) & (df_plot['start_ts'] <= ts_fi)]
 
@@ -2272,7 +2264,6 @@ def main_app():
                 else:
                     st.success("✨ ¡Excelente! No hay servicios con saldo pendiente en tu Backlog.")
 
-            # --- NUEVA PESTAÑA: PROYECCIÓN ANUAL ---
             with tab_proyeccion:
                 st.subheader("📈 Proyección de Facturación (Tentativa)")
                 st.info("Este gráfico agrupa la facturación esperada por mes, combinando los Hitos Programados explícitamente y el Pronóstico Automático de los proyectos que finalizan según la Carta Gantt. Todo expresado en Dólares (USD) para uniformidad.")
