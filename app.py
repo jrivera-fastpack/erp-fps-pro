@@ -544,6 +544,7 @@ def main_app():
     with tab2:
         st.header("Matriz de Recursos (Proyección Global)")
         
+        # Filtro exclusivo de matriz comercial
         nvs_activas_comercial = [n for n in obtener_nvs("Abierta") if n['id_nv'] != "INTERNO"]
         if nvs_activas_comercial:
             dict_nvs_label = {f"{n['id_nv']} - {n['cliente']}": n for n in nvs_activas_comercial}
@@ -835,9 +836,11 @@ def main_app():
                         hoy = datetime.today().date()
                         
                         for act in actividades_unicas:
+                            # --- LÓGICA DE TRAZABILIDAD Y MÚLTIPLES SEGMENTOS ---
                             df_act_raw = df_temp[df_temp['key_grupo'] == act].copy()
                             df_act_raw['fecha_inicio_dt'] = pd.to_datetime(df_act_raw['fecha_inicio'])
                             
+                            # Encontrar siempre el segmento más reciente para editar
                             latest_start = df_act_raw['fecha_inicio_dt'].max()
                             df_latest = df_act_raw[df_act_raw['fecha_inicio_dt'] == latest_start]
                             
@@ -1076,8 +1079,8 @@ def main_app():
                     int_seleccionada = st.selectbox("Seleccione labor a eliminar", list(opciones_int_borrar.keys()))
                     if st.button("🗑️ Eliminar Labor Interna"):
                         try:
-                            id_int = opciones_int_borrar[int_seleccionada]
-                            supabase.table("asignaciones_personal").delete().eq("id", id_int).execute()
+                            id_ausencia = opciones_int_borrar[int_seleccionada]
+                            supabase.table("asignaciones_personal").delete().eq("id", id_ausencia).execute()
                             st.success("✅ Labor eliminada exitosamente.")
                             st.rerun()
                         except Exception as e:
@@ -1929,26 +1932,8 @@ def main_app():
             with tab_tabla:
                 st.subheader("Tabla General y Control de Facturación Mensual")
                 
-                # --- NUEVA VISTA DESAGRUPADA POR NOTA DE VENTA ---
-                st.markdown("### 📊 Resumen Financiero por Nota de Venta (Ítem/Fase)")
-                st.info("Muestra el detalle financiero de cada ítem o fase de forma independiente.")
+                # SE ELIMINÓ LA TABLA "Resumen Financiero por Nota de Venta (Ítem/Fase)" a petición del usuario.
                 
-                resumen_base = df_kpi[~df_kpi['id_nv'].isin(['AUSENCIA', 'INTERNO'])].copy()
-                
-                def fmt_base_currency(row, col_name):
-                    val = row[col_name]
-                    if row['moneda'] == 'USD': return f"USD ${val:,.2f}"
-                    return f"CLP ${val:,.0f}".replace(",", ".")
-                    
-                resumen_base['Ofertado Total'] = resumen_base.apply(lambda r: fmt_base_currency(r, 'monto_vendido'), axis=1)
-                resumen_base['Facturado Total'] = resumen_base.apply(lambda r: fmt_base_currency(r, 'monto_facturado_hitos'), axis=1)
-                resumen_base['Pendiente Total'] = resumen_base.apply(lambda r: fmt_base_currency(r, 'monto_pendiente'), axis=1)
-                resumen_base['Margen Total'] = resumen_base.apply(lambda r: fmt_base_currency(r, 'Margen'), axis=1)
-                
-                resumen_base.rename(columns={'id_nv': 'Nota de Venta', 'cliente': 'Cliente'}, inplace=True)
-                st.dataframe(resumen_base[['Nota de Venta', 'Cliente', 'Ofertado Total', 'Facturado Total', 'Pendiente Total', 'Margen Total']], use_container_width=True, hide_index=True)
-
-                st.divider()
                 st.markdown(f"### 💸 Pronóstico de Facturación Activa para {mes_sel_global} {anio_sel_global}")
                 
                 df_hitos_mes = pd.DataFrame()
