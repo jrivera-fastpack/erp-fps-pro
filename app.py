@@ -284,7 +284,12 @@ def main_app():
                             
                             c_f1, c_f2 = st.columns(2)
                             f_ini = c_f1.date_input("Fecha Inicio", format="DD/MM/YYYY")
-                            dias_proy = c_f2.number_input("Días totales", min_value=1.0, value=float(nv_data_sel.get('hh_vendidas', 5.0)))
+                            
+                            # PROTECCIÓN PARA EVITAR StreamlitValueBelowMinError
+                            val_dias_db = float(nv_data_sel.get('hh_vendidas', 5.0))
+                            val_min_seguro = val_dias_db if val_dias_db >= 1.0 else 1.0
+                            
+                            dias_proy = c_f2.number_input("Días totales", min_value=1.0, value=val_min_seguro)
                             incluye_finde = st.radio("¿Fines de semana?", ["No", "Sí"], horizontal=True)
                             
                             if st.form_submit_button("Guardar Proyección", use_container_width=True):
@@ -479,7 +484,8 @@ def main_app():
                                     d_trab = c_d.number_input("Días", min_value=1, value=max(1, (pd.to_datetime(df_last['fecha_fin'].max()).date() - f_ini).days + 1))
                                     just = st.text_input("Justificación", value=just_str)
                                 
-                                d_extra = c_d.number_input("Días Extra", min_value=0, value=int(df_last['dias_extras'].max()) if 'dias_extras' in df_last else 0)
+                                val_d_extra = int(df_last['dias_extras'].max()) if 'dias_extras' in df_last and pd.notna(df_last['dias_extras'].max()) else 0
+                                d_extra = c_d.number_input("Días Extra", min_value=0, value=max(0, val_d_extra))
                                 ext = c_d.radio("Fines semana", ["Libres", "Extras"], index=1 if 'EXTRAS' in df_last['comentarios'].values else 0)
                                 
                                 if dict_nvs_label[nv_label_sel]['tipo_servicio'] == 'SE TERRENO':
