@@ -552,55 +552,79 @@ def main_app():
             col_exp1, col_exp2, col_exp3 = st.columns(3)
             
             with col_exp1:
-                with st.expander("➕ Proyección Comercial", expanded=False):
-                    with st.form("form_proyeccion"):
-                        nv_label_sel = st.selectbox("Proyecto (NV - Cliente)", list(dict_nvs_label.keys()), key="proy_nv")
-                        nv_data_sel = dict_nvs_label[nv_label_sel]
-                        
-                        dias_defecto = float(nv_data_sel.get('hh_vendidas', 5.0))
-                        especialistas_sel = st.multiselect("Especialistas Reservados", ESPECIALISTAS, key="proy_esp")
-                        
-                        if nv_data_sel.get('tipo_servicio') == 'SE TERRENO':
-                            st.markdown("#### 🕒 Horarios Especiales de Terreno")
-                            c_t1, c_t2, c_t3 = st.columns(3)
-                            h_inicio_val = c_t1.time_input("Hora de Inicio", value=datetime.strptime('08:00', '%H:%M').time())
-                            h_fin_val = c_t2.time_input("Hora de Fin", value=datetime.strptime('17:30', '%H:%M').time())
-                            h_diarias_val = c_t3.number_input("Horas a imputar por día", value=9.5, step=0.5)
+                with st.expander("💼 Proyección Comercial", expanded=False):
+                    tab_proy1, tab_proy2 = st.tabs(["Asignar Proyección", "Eliminar Proyección"])
+                    
+                    with tab_proy1:
+                        with st.form("form_proyeccion"):
+                            nv_label_sel = st.selectbox("Proyecto (NV - Cliente)", list(dict_nvs_label.keys()), key="proy_nv")
+                            nv_data_sel = dict_nvs_label[nv_label_sel]
+                            
+                            dias_defecto = float(nv_data_sel.get('hh_vendidas', 5.0))
+                            especialistas_sel = st.multiselect("Especialistas Reservados", ESPECIALISTAS, key="proy_esp")
+                            
+                            if nv_data_sel.get('tipo_servicio') == 'SE TERRENO':
+                                st.markdown("#### 🕒 Horarios Especiales de Terreno")
+                                c_t1, c_t2, c_t3 = st.columns(3)
+                                h_inicio_val = c_t1.time_input("Hora de Inicio", value=datetime.strptime('08:00', '%H:%M').time())
+                                h_fin_val = c_t2.time_input("Hora de Fin", value=datetime.strptime('17:30', '%H:%M').time())
+                                h_diarias_val = c_t3.number_input("Horas a imputar por día", value=9.5, step=0.5)
+                            else:
+                                h_inicio_val = None
+                                h_fin_val = None
+                                h_diarias_val = None
+                            
+                            c_f1, c_f2 = st.columns(2)
+                            f_ini = c_f1.date_input("Fecha de Inicio", format="DD/MM/YYYY", key="proy_ini")
+                            dias_proy = c_f2.number_input("Días totales", min_value=1.0, value=dias_defecto if dias_defecto > 0 else 5.0, key="proy_dias")
+                            
+                            incluye_finde = st.radio("¿Considerar fin de semana?", ["No (Saltar Sáb/Dom)", "Sí (Días continuos)"], index=0, key="proy_finde")
+                            
+                            if st.form_submit_button("Guardar Proyección", use_container_width=True):
+                                try:
+                                    supabase.table("asignaciones_personal").delete().eq("id_nv", nv_data_sel['id_nv']).eq("actividad_ssee", "PROYECCION_GLOBAL").execute()
+                                    es_continuo = incluye_finde == "Sí (Días continuos)"
+                                    f_f = calcular_fecha_fin_dinamica(f_ini, dias_proy, es_continuo)
+                                    for esp in especialistas_sel:
+                                        p_asig = {
+                                            "id_nv": nv_data_sel['id_nv'], 
+                                            "especialista": esp, 
+                                            "fecha_inicio": str(f_ini), 
+                                            "fecha_fin": str(f_f), 
+                                            "hh_asignadas": 0, 
+                                            "actividad_ssee": "PROYECCION_GLOBAL", 
+                                            "comentarios": "EXTRAS" if es_continuo else "LIBRES", 
+                                            "progreso": 0,
+                                            "hora_inicio_t": h_inicio_val.strftime('%H:%M') if h_inicio_val else '08:00',
+                                            "hora_fin_t": h_fin_val.strftime('%H:%M') if h_fin_val else '17:30',
+                                            "horas_diarias": h_diarias_val if h_diarias_val else 0
+                                        }
+                                        safe_insert_asignacion(p_asig)
+                                    st.success("✅ Proyección actualizada en la Matriz correctamente.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Error al guardar proyección: {e}")
+                                    
+                    with tab_proy2:
+                        proy_raw = supabase.table("asignaciones_personal").select("*").eq("actividad_ssee", "PROYECCION_GLOBAL").execute().data
+                        if proy_raw:
+                            df_proy_borrar = pd.DataFrame(proy_raw)
+                            opciones_proy_borrar = {}
+                            for _, row in df_proy_borrar.iterrows():
+                                etiqueta = f"{row['especialista']} | {row['id_nv']} | {row['fecha_inicio']} a {row['fecha_fin']}"
+                                opciones_proy_borrar[etiqueta] = row['id']
+                                
+                            proy_seleccionada = st.selectbox("Seleccione proyección a eliminar", list(opciones_proy_borrar.keys()))
+                            if st.button("🗑️ Eliminar Proyección"):
+                                try:
+                                    id_proy = opciones_proy_borrar[proy_seleccionada]
+                                    supabase.table("asignaciones_personal").delete().eq("id", id_proy).execute()
+                                    st.success("✅ Proyección eliminada exitosamente. Se ha liberado al especialista en la Matriz.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error al eliminar la proyección: {e}")
                         else:
-                            h_inicio_val = None
-                            h_fin_val = None
-                            h_diarias_val = None
-                        
-                        c_f1, c_f2 = st.columns(2)
-                        f_ini = c_f1.date_input("Fecha de Inicio", format="DD/MM/YYYY", key="proy_ini")
-                        dias_proy = c_f2.number_input("Días totales", min_value=1.0, value=dias_defecto if dias_defecto > 0 else 5.0, key="proy_dias")
-                        
-                        incluye_finde = st.radio("¿Considerar fin de semana?", ["No (Saltar Sáb/Dom)", "Sí (Días continuos)"], index=0, key="proy_finde")
-                        
-                        if st.form_submit_button("Guardar Proyección", use_container_width=True):
-                            try:
-                                supabase.table("asignaciones_personal").delete().eq("id_nv", nv_data_sel['id_nv']).eq("actividad_ssee", "PROYECCION_GLOBAL").execute()
-                                es_continuo = incluye_finde == "Sí (Días continuos)"
-                                f_f = calcular_fecha_fin_dinamica(f_ini, dias_proy, es_continuo)
-                                for esp in especialistas_sel:
-                                    p_asig = {
-                                        "id_nv": nv_data_sel['id_nv'], 
-                                        "especialista": esp, 
-                                        "fecha_inicio": str(f_ini), 
-                                        "fecha_fin": str(f_f), 
-                                        "hh_asignadas": 0, 
-                                        "actividad_ssee": "PROYECCION_GLOBAL", 
-                                        "comentarios": "EXTRAS" if es_continuo else "LIBRES", 
-                                        "progreso": 0,
-                                        "hora_inicio_t": h_inicio_val.strftime('%H:%M') if h_inicio_val else '08:00',
-                                        "hora_fin_t": h_fin_val.strftime('%H:%M') if h_fin_val else '17:30',
-                                        "horas_diarias": h_diarias_val if h_diarias_val else 0
-                                    }
-                                    safe_insert_asignacion(p_asig)
-                                st.success("✅ Proyección actualizada en la Matriz correctamente.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Error al guardar proyección: {e}")
+                            st.write("No hay proyecciones comerciales asignadas actualmente.")
 
             with col_exp2:
                 with st.expander("🏢 Labores Internas (Taller/Oficina)", expanded=False):
@@ -2011,6 +2035,7 @@ def main_app():
 
             with tab_tabla:
                 st.subheader("Tabla General y Control de Facturación Mensual")
+                st.info("Esta sección consolida la facturación tentativa exclusivamente del mes seleccionado.")
                 
                 st.markdown(f"### 💸 Pronóstico de Facturación Activa para {mes_sel_global} {anio_sel_global}")
                 
