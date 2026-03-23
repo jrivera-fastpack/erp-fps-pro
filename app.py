@@ -992,7 +992,7 @@ def main_app():
                                         dias_trabajo = col_d.number_input("Días de duración", min_value=1, value=dias_estimados)
                                         just_val = st.text_input("Justificación / Comentario:", value=existing_just_display)
                                     
-                                    val_d_extra = int(df_last['dias_extras'].max()) if 'dias_extras' in df_last and pd.notna(df_last['dias_extras'].max()) else 0
+                                    val_d_extra = int(df_latest['dias_extras'].max()) if 'dias_extras' in df_latest.columns and pd.notna(df_latest['dias_extras'].max()) else 0
                                     d_extra = col_d.number_input("Días Extra (Atrasos)", min_value=0, value=max(0, val_d_extra))
                                     extras = col_d.radio("Fines de semana y Feriados", ["Libres (Descanso)", "Extras (Sáb/Dom/Feriado)"], index=1 if is_extras else 0)
                                     
