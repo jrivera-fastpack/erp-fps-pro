@@ -682,6 +682,11 @@ def main_app():
                 # Excluir explícitamente tareas SIN PROGRAMAR y DESCANSO del gráfico
                 df_g = df_g[(df_g['comentarios'] != 'SIN_PROGRAMAR') & (df_g['comentarios'] != 'DESCANSO')]
                 
+                # Override para visualización continua y sólida en Turnos / EXTRAS (fusiona visualmente las horas)
+                mask_extras = df_g['comentarios'] == 'EXTRAS'
+                df_g.loc[mask_extras, 'start_ts'] = pd.to_datetime(df_g.loc[mask_extras, 'fecha_inicio'].astype(str) + ' 00:00:00')
+                df_g.loc[mask_extras, 'end_ts'] = pd.to_datetime(df_g.loc[mask_extras, 'fecha_fin'].astype(str) + ' 23:59:59')
+                
                 if not df_g.empty:
                     df_grp = df_g.groupby(['id_nv', 'cliente', 'Labor', 'start_ts', 'end_ts', 'progreso', 'comentarios', 'justificacion']).agg({
                         'especialista': lambda x: ", ".join(set(x))
@@ -770,7 +775,7 @@ def main_app():
                             marker_line_width=0, 
                             opacity=0.95, 
                             width=0.75, 
-                            textfont=dict(size=14, color='#000000', family="Arial"),
+                            textfont=dict(size=13, color='#000000', family="Arial"),
                             constraintext='none'
                         )
                         
@@ -782,20 +787,6 @@ def main_app():
                         if (end_limit - curr).days > 90:
                             end_limit = curr + pd.Timedelta(days=90)
                             st.warning("⚠️ El rango es muy amplio. Se muestran máximo 90 días en pantalla para evitar bloqueos.")
-                        
-                        while curr <= end_limit + pd.Timedelta(days=1):
-                            str_curr = curr.strftime("%d-%m-%Y")
-                            es_feriado = str_curr in FERIADOS_CHILE_2026
-                            es_finde = curr.weekday() >= 5
-                            
-                            if es_finde or es_feriado:
-                                label_txt = "FERIADO" if es_feriado else "SÁB / DOM"
-                                color_fill = "#D5D8DC" if es_feriado else "#FADBD8"
-                                color_line = "#ABB2B9" if es_feriado else "#E6B0AA"
-                                color_font = "#566573" if es_feriado else "#C0392B"
-                                
-                                fig.add_vrect(x0=curr.strftime("%Y-%m-%d 08:00:00"), x1=(curr + timedelta(days=1)).strftime("%Y-%m-%d 17:30:00"), fillcolor=color_fill, opacity=0.4, annotation_text=f"{label_txt} (DESCANSO)", annotation_position="top left", annotation_font_color=color_font, annotation_font_size=10, layer="below", line_width=1.5, line_dash="dot", line_color=color_line)
-                            curr += timedelta(days=1)
                         
                         fig.update_xaxes(range=[t_i.strftime("%Y-%m-%d 00:00:00"), t_f.strftime("%Y-%m-%d 23:59:59")], tickformat="%d/%m/%Y", dtick=86400000, title="Fecha Operativa", tickfont=dict(size=12, color='#666'), gridcolor='rgba(0,0,0,0.05)', showline=True, linewidth=1, linecolor='rgba(0,0,0,0.2)', automargin=True)
                         
