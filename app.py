@@ -974,6 +974,8 @@ def main_app():
                 if nv_sel:
                     r_nv = df_k[df_k['Proyecto_Label'] == nv_sel].iloc[0]
                     d_p_m, d_e_t, hoy = 0, 0, datetime.today().date()
+                    df_acts_proyecto = pd.DataFrame()
+                    
                     if asig_all_raw:
                         df_all_temp = pd.DataFrame(asig_all_raw)
                         
