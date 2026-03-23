@@ -33,20 +33,30 @@ def init_connection():
 try:
     supabase: Client = init_connection()
 except Exception:
-    st.error("Error crítico: No se pudo conectar a la base de datos Supabase. Verifique secrets.toml.")
+    st.error("Error crítico: No se pudo conectar a la base de datos Supabase. Verifique secrets.toml o la configuración en Streamlit Cloud.")
     st.stop()
 
-# --- INICIALIZACIÓN DE PROYECTOS INTERNOS ---
+# --- INICIALIZACIÓN DE PROYECTOS INTERNOS (RRHH Y OPERACIONES) ---
 try:
     aus_nv = supabase.table("notas_venta").select("id_nv").eq("id_nv", "AUSENCIA").execute()
     if not aus_nv.data:
-        supabase.table("notas_venta").insert({"id_nv": "AUSENCIA", "cliente": "Gestión Interna (RRHH)", "tipo_servicio": "SE TERRENO", "lugar": "Oficina/Casa", "moneda": "CLP", "monto_vendido": 0.0, "hh_vendidas": 0.0, "estado": "Abierta"}).execute()
+        supabase.table("notas_venta").insert({
+            "id_nv": "AUSENCIA", "cliente": "Gestión Interna (RRHH)", "tipo_servicio": "SE TERRENO", 
+            "lugar": "Oficina/Casa", "moneda": "CLP", "monto_vendido": 0.0, 
+            "hh_vendidas": 0.0, "estado": "Abierta"
+        }).execute()
+        
     int_nv = supabase.table("notas_venta").select("id_nv").eq("id_nv", "INTERNO").execute()
     if not int_nv.data:
-        supabase.table("notas_venta").insert({"id_nv": "INTERNO", "cliente": "Gestión Interna (Operaciones)", "tipo_servicio": "SE TERRENO", "lugar": "Oficina/Nave FPS", "moneda": "CLP", "monto_vendido": 0.0, "hh_vendidas": 0.0, "estado": "Abierta"}).execute()
+        supabase.table("notas_venta").insert({
+            "id_nv": "INTERNO", "cliente": "Gestión Interna (Operaciones)", "tipo_servicio": "SE TERRENO", 
+            "lugar": "Oficina/Nave FPS", "moneda": "CLP", "monto_vendido": 0.0, 
+            "hh_vendidas": 0.0, "estado": "Abierta"
+        }).execute()
 except Exception:
     pass
 
+# --- FUNCIÓN DE INSERCIÓN BLINDADA ---
 def safe_insert_asignacion(payload):
     try:
         return supabase.table("asignaciones_personal").insert(payload).execute()
@@ -57,15 +67,35 @@ def safe_insert_asignacion(payload):
             for col in ["dias_extras", "justificacion", "hora_inicio_t", "hora_fin_t", "horas_diarias"]:
                 payload_clean.pop(col, None)
             res = supabase.table("asignaciones_personal").insert(payload_clean).execute()
-            st.toast("⚠️ BD desactualizada. Ejecute comandos SQL para activar todas las funciones.", icon="⚠️")
+            st.toast("⚠️ Base de datos desactualizada. Ejecute comandos SQL para activar horarios personalizados y KPIs.", icon="⚠️")
             return res
         else:
             raise ex_db
 
 # --- CONSTANTES GLOBALES ---
-ESPECIALISTAS = ["Felipe Romero", "David Colina", "Adelmo Calderon", "Jose Valenzuela", "Jose Peña", "German Contreras", "Esteban Romero", "Nicolas Salazar", "Javier Segovia", "Jonathan Aguilar", "Ignacio Castro", "Javier Rivera"]
-ABREVIATURAS = {"Entrega materiales": "Mat", "Montaje de detección": "M.Det", "Montaje de supresión": "M.Sup", "Montaje de VESDA": "M.VESDA", "Cableado y conexionado": "Cabl", "Programación": "Prog", "PEM": "PEM", "Entrega de red line": "RedLine"}
-FERIADOS_CHILE_2026 = ["01-01-2026", "03-04-2026", "04-04-2026", "01-05-2026", "21-05-2026", "29-06-2026", "16-07-2026", "15-08-2026", "18-09-2026", "19-09-2026", "12-10-2026", "31-10-2026", "01-11-2026", "08-12-2026", "25-12-2026"]
+ESPECIALISTAS = [
+    "Felipe Romero", "David Colina", "Adelmo Calderon", "Jose Valenzuela", 
+    "Jose Peña", "German Contreras", "Esteban Romero", "Nicolas Salazar", 
+    "Javier Segovia", "Jonathan Aguilar", "Ignacio Castro", "Javier Rivera"
+]
+
+ABREVIATURAS = {
+    "Entrega materiales": "Mat", 
+    "Montaje de detección": "M.Det", 
+    "Montaje de supresión": "M.Sup", 
+    "Montaje de VESDA": "M.VESDA",
+    "Cableado y conexionado": "Cabl", 
+    "Programación": "Prog", 
+    "PEM": "PEM", 
+    "Entrega de red line": "RedLine"
+}
+
+FERIADOS_CHILE_2026 = [
+    "01-01-2026", "03-04-2026", "04-04-2026", "01-05-2026", "21-05-2026", 
+    "29-06-2026", "16-07-2026", "15-08-2026", "18-09-2026", "19-09-2026", 
+    "12-10-2026", "31-10-2026", "01-11-2026", "08-12-2026", "25-12-2026"
+]
+
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 MESES_ES = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
 LISTA_MODALIDADES = [
@@ -171,7 +201,7 @@ def login_screen():
     with c2:
         st.markdown("<div class='login-container'><h2 style='text-align: center; color: #E6007E;'>🔐 Acceso Coordinación FPS</h2>", unsafe_allow_html=True)
         with st.form("login_form"):
-            email = st.text_input("Correo Electrónico")
+            email = st.text_input("Correo Electrónico", placeholder="usuario@empresa.com")
             password = st.text_input("Contraseña", type="password")
             if st.form_submit_button("Ingresar al Sistema", use_container_width=True):
                 if email and password:
@@ -191,9 +221,10 @@ def main_app():
     st.sidebar.markdown(f"<p style='text-align:center;'>👤 <b>{st.session_state.user_email}</b></p>", unsafe_allow_html=True)
     st.sidebar.button("🚪 Cerrar Sesión", on_click=logout, use_container_width=True)
     st.sidebar.divider()
+    st.sidebar.header("⚙️ Configuración Global")
     tasa_cambio = st.sidebar.number_input("Valor del Dólar (CLP)", min_value=1.0, value=950.0, step=1.0)
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 1. Comercial", "🗓️ 2. Matriz Semanal", "⚙️ 3. Ejecución y Gantt", "💰 4. Gastos y KPIs", "📄 5. Cierre"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 1. Comercial", "🗓️ 2. Matriz Semanal", "⚙️ 3. Ejecución y Gantt", "💰 4. Gastos y KPIs", "📄 5. Cierre y Reporte PDF"])
 
     # === MÓDULO 1: COMERCIAL ===
     with tab1:
@@ -205,7 +236,8 @@ def main_app():
 
             if st.session_state.nv_pending is not None:
                 st.warning("⚠️ **Cruces de Fechas Detectados**")
-                for conf in st.session_state.nv_conflicts: st.write(f"- 👨‍🔧 **{conf['especialista']}** asignado a **{conf['id_nv']}** ({conf['fecha_inicio']} al {conf['fecha_fin']}).")
+                for conf in st.session_state.nv_conflicts: 
+                    st.write(f"- 👨‍🔧 **{conf['especialista']}** asignado a **{conf['id_nv']}** ({conf['fecha_inicio']} al {conf['fecha_fin']}).")
                 decision = st.radio("¿Cómo proceder?", ["Mantener en ambos servicios", "Quitar de los servicios anteriores"])
                 c_btn1, c_btn2 = st.columns(2)
                 with c_btn1:
@@ -241,7 +273,7 @@ def main_app():
                     lugar = c3.text_input("Lugar / Faena")
                     col_mon, col_mnt = c3.columns([1, 2])
                     moneda = col_mon.selectbox("Moneda", ["CLP", "USD"])
-                    if moneda == "CLP": monto_str = col_mnt.text_input("Monto Ofertado", value="")
+                    if moneda == "CLP": monto_str = col_mnt.text_input("Monto Ofertado", value="", placeholder="Ej: 14.538.342")
                     else: monto_usd = col_mnt.number_input("Monto Ofertado", min_value=0.0, step=0.01)
                     
                     st.divider()
@@ -442,6 +474,7 @@ def main_app():
         cols_int = [d.strftime("%d-%m-%Y") for d in fechas_rango]
         cols_disp = [f"{DIAS_ES[d.weekday()]} {d.strftime('%d/%m')}" for d in fechas_rango]
         matriz_final = pd.DataFrame(index=ESPECIALISTAS, columns=cols_int)
+        
         for col in cols_int:
             f_obj = datetime.strptime(col, "%d-%m-%Y").date()
             matriz_final[col] = "⌛ No Hábil" if (f_obj.weekday() >= 5 or col in FERIADOS_CHILE_2026) else "🟢 Disponible"
@@ -451,20 +484,29 @@ def main_app():
 
         if asig_raw:
             for a in asig_raw:
-                try: f_i, f_f = pd.to_datetime(a['fecha_inicio']).date(), pd.to_datetime(a['fecha_fin']).date()
+                esp_val = a.get('especialista')
+                if not esp_val or esp_val not in ESPECIALISTAS:
+                    continue
+                    
+                try: 
+                    f_i, f_f = pd.to_datetime(a['fecha_inicio']).date(), pd.to_datetime(a['fecha_fin']).date()
                 except: continue
                 
                 if a['id_nv'] == 'AUSENCIA':
                     for i in range((f_f - f_i).days + 1):
                         d = f_i + timedelta(days=i)
-                        if d in fechas_rango: matriz_final.at[a['especialista'], d.strftime("%d-%m-%Y")] = f"🌴 {a['actividad_ssee']}"
+                        if d in fechas_rango: 
+                            matriz_final.at[esp_val, d.strftime("%d-%m-%Y")] = f"🌴 {a['actividad_ssee']}"
+                
                 elif a['id_nv'] == 'INTERNO':
                     for i in range((f_f - f_i).days + 1):
                         d = f_i + timedelta(days=i)
                         if d.weekday() < 5 and d.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026 and d in fechas_rango:
                             col = d.strftime("%d-%m-%Y")
-                            val = str(matriz_final.at[a['especialista'], col])
-                            if '🌴' not in val: matriz_final.at[a['especialista'], col] = f"🏢 {a['actividad_ssee']}" if val in ["🟢 Disponible", "⌛ No Hábil"] else val + f" + 🏢 {a['actividad_ssee']}"
+                            val = str(matriz_final.at[esp_val, col])
+                            if '🌴' not in val: 
+                                matriz_final.at[esp_val, col] = f"🏢 {a['actividad_ssee']}" if val in ["🟢 Disponible", "⌛ No Hábil"] else val + f" + 🏢 {a['actividad_ssee']}"
+                
                 elif a.get('actividad_ssee') == 'PROYECCION_GLOBAL':
                     es_cont = a.get('comentarios') == 'EXTRAS'
                     for i in range((f_f - f_i).days + 1):
@@ -472,10 +514,10 @@ def main_app():
                         if not es_cont and (d.weekday() >= 5 or d.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026): continue
                         if d in fechas_rango:
                             col = d.strftime("%d-%m-%Y")
-                            val = str(matriz_final.at[a['especialista'], col])
+                            val = str(matriz_final.at[esp_val, col])
                             if '🌴' not in val:
                                 e = f"{a['id_nv']} [{mapa_clientes.get(a['id_nv'], 'N/A')}]"
-                                matriz_final.at[a['especialista'], col] = e if val in ["🟢 Disponible", "⌛ No Hábil"] else val + f" + {e}"
+                                matriz_final.at[esp_val, col] = e if val in ["🟢 Disponible", "⌛ No Hábil"] else val + f" + {e}"
         
         matriz_final.columns = cols_disp
         def style_m(x):
@@ -602,29 +644,53 @@ def main_app():
         st.divider()
         st.subheader("3. Cronograma Operativo (Gantt)")
         cv1, cv2, cv3, cv4 = st.columns([1,1,1,1])
-        v_gantt = cv1.radio("Vista:", ["Global", "Por Proyecto"])
-        f_tipo = cv2.radio("Filtro Tipo:", ["Todos", "SSEE", "SE TERRENO"])
-        f_tiemp = cv3.radio("Ventana:", ["Todo", "15 Días", "1 Mes"], index=1)
-        d_ini_g = cv4.date_input("Inicio", value=datetime.today().date())
+        v_gantt = cv1.radio("Filtro de Vista:", ["🌍 General (Todos)", "🔍 Por Proyecto Seleccionado"], horizontal=True)
+        f_tipo = cv2.radio("Tipo de Servicio (Filtra la vista General):", ["Todos", "SSEE", "SE TERRENO"], horizontal=True)
+        f_tiemp = cv3.radio("⏳ Ventana de Tiempo:", ["Todo el Proyecto", "1 Semana", "15 Días", "1 Mes"], horizontal=True, index=2)
+        d_ini_g = cv4.date_input("📅 Fecha de inicio", value=datetime.today().date())
 
         g_raw = supabase.table("asignaciones_personal").select("*").execute().data
         if g_raw:
             df_g = pd.DataFrame(g_raw)
-            df_g = df_g[(df_g['actividad_ssee'] != 'PROYECCION_GLOBAL') & (~df_g['id_nv'].isin(['INTERNO', 'AUSENCIA']))]
-            n_t = {n['id_nv']: n['tipo_servicio'] for n in obtener_nvs()} if obtener_nvs() else {}
-            n_c = {n['id_nv']: n['cliente'] for n in obtener_nvs()} if obtener_nvs() else {}
             
-            if v_gantt == "Por Proyecto" and nv_id_sel: df_g = df_g[df_g['id_nv'] == nv_id_sel]
-            elif f_tipo != "Todos": df_g = df_g[df_g['id_nv'].map(n_t) == f_tipo]
+            # Filtramos proyecciones y excluímos INTERNO/AUSENCIA para no ensuciar el Gantt
+            df_g = df_g[(df_g['actividad_ssee'] != 'PROYECCION_GLOBAL') & (~df_g['id_nv'].isin(['INTERNO', 'AUSENCIA']))]
+            
+            nvs_gantt_todas = obtener_nvs()
+            n_t = {n['id_nv']: n['tipo_servicio'] for n in nvs_gantt_todas} if nvs_gantt_todas else {}
+            n_c = {n['id_nv']: n['cliente'] for n in nvs_gantt_todas} if nvs_gantt_todas else {}
+            
+            if v_gantt == "🔍 Por Proyecto Seleccionado" and nv_id_sel:
+                df_g = df_g[df_g['id_nv'] == nv_id_sel]
+            else:
+                if f_tipo != "Todos":
+                    df_g['tipo_temp'] = df_g['id_nv'].map(n_t)
+                    df_g = df_g[df_g['tipo_temp'] == f_tipo]
             
             if not df_g.empty:
-                df_g['start_ts'] = pd.to_datetime(df_g['fecha_inicio'].astype(str) + ' ' + df_g['hora_inicio_t'].fillna('08:00'))
-                df_g['end_ts'] = pd.to_datetime(df_g['fecha_fin'].astype(str) + ' ' + df_g['hora_fin_t'].fillna('17:30'))
+                df_g['cliente'] = df_g['id_nv'].map(n_c)
+                df_g['Labor'] = df_g['actividad_ssee'].fillna('Servicio Terreno')
+                
+                if 'hora_inicio_t' in df_g.columns:
+                    df_g['hora_i_str'] = df_g['hora_inicio_t'].fillna('08:00').replace('', '08:00')
+                    df_g['hora_f_str'] = df_g['hora_fin_t'].fillna('17:30').replace('', '17:30')
+                else:
+                    df_g['hora_i_str'] = '08:00'
+                    df_g['hora_f_str'] = '17:30'
+
+                df_g['start_ts'] = pd.to_datetime(df_g['fecha_inicio'].astype(str) + ' ' + df_g['hora_i_str'])
+                df_g['end_ts'] = pd.to_datetime(df_g['fecha_fin'].astype(str) + ' ' + df_g['hora_f_str'])
+                
+                # Excluir explícitamente tareas SIN PROGRAMAR del gráfico
                 df_g = df_g[df_g['comentarios'] != 'SIN_PROGRAMAR']
                 
                 if not df_g.empty:
-                    df_grp = df_g.groupby(['id_nv', 'actividad_ssee', 'start_ts', 'end_ts', 'progreso', 'comentarios', 'justificacion']).agg({'especialista': lambda x: ", ".join(set(x))}).reset_index()
-                    df_grp['Eje_Y'] = df_grp['id_nv'] + " | " + df_grp['actividad_ssee']
+                    df_grp = df_g.groupby(['id_nv', 'cliente', 'Labor', 'start_ts', 'end_ts', 'progreso', 'comentarios', 'justificacion']).agg({
+                        'especialista': lambda x: ", ".join(set(x))
+                    }).reset_index()
+                    
+                    df_grp = df_grp.sort_values(by=['id_nv', 'start_ts'], ascending=[True, True])
+                    df_grp['Eje_Y'] = df_grp['id_nv'] + " | " + df_grp['Labor']
                     
                     rows = []
                     for _, r in df_grp.iterrows():
@@ -673,20 +739,79 @@ def main_app():
                             rows.append(r)
                     
                     df_p = pd.DataFrame(rows)
+                    
                     t_i = pd.to_datetime(d_ini_g)
-                    t_f = t_i + pd.Timedelta(days=15 if f_tiemp == "15 Días" else (30 if f_tiemp == "1 Mes" else 180))
-                    if f_tiemp != "Todo": df_p = df_p[(df_p['end_ts'] >= t_i) & (df_p['start_ts'] <= t_f)]
+                    if f_tiemp == "1 Semana": t_f = t_i + pd.Timedelta(days=7)
+                    elif f_tiemp == "15 Días": t_f = t_i + pd.Timedelta(days=15)
+                    elif f_tiemp == "1 Mes": t_f = t_i + pd.Timedelta(days=30)
+                    else: 
+                        t_i = df_p['start_ts'].min() if not df_p.empty else t_i
+                        t_f = df_p['end_ts'].max() if not df_p.empty else t_i + pd.Timedelta(days=30)
+    
+                    if f_tiemp != "Todo el Proyecto" and not df_p.empty:
+                        df_p = df_p[(df_p['end_ts'] >= t_i) & (df_p['start_ts'] <= t_f)]
                     
                     if not df_p.empty:
-                        fig = px.timeline(df_p, x_start="start_ts", x_end="end_ts", y="Eje_Y", color="actividad_ssee", text="Etiqueta_Barra", color_discrete_sequence=px.colors.qualitative.Set1)
-                        # Textos ajustados para no recortarse en barras pequeñas
-                        fig.update_traces(textposition='auto', textfont=dict(size=13, color='black', family="Arial"), marker_line_width=0, opacity=0.95, constraintext='none')
-                        fig.update_yaxes(autorange="reversed", title="", tickfont=dict(size=14))
-                        fig.update_xaxes(range=[t_i.strftime("%Y-%m-%d 00:00:00"), t_f.strftime("%Y-%m-%d 23:59:59")], dtick=86400000, tickformat="%d/%m", title="")
-                        fig.update_layout(height=max(250, len(df_p['Eje_Y'].unique())*80), plot_bgcolor='white', legend=dict(orientation="h", y=1.05))
+                        orden_eje_y = df_p['Eje_Y'].unique()
+                        colores_globo = ['#3498DB', '#E67E22', '#2ECC71', '#E74C3C', '#9B59B6', '#1ABC9C', '#F1C40F', '#7F8C8D']
+    
+                        fig = px.timeline(
+                            df_p, 
+                            x_start="start_ts", 
+                            x_end="end_ts", 
+                            y="Eje_Y", 
+                            color="Labor",
+                            text="Etiqueta_Barra",
+                            hover_data={"especialista": True, "progreso": True, "Inicio": True, "Fin": True, "start_ts": False, "end_ts": False},
+                            color_discrete_sequence=colores_globo
+                        )
+    
+                        fig.update_traces(
+                            textposition='auto', 
+                            insidetextanchor='middle', 
+                            marker_line_width=0, 
+                            opacity=0.95, 
+                            width=0.75, 
+                            textfont=dict(size=14, color='#000000', family="Arial"),
+                            constraintext='none'
+                        )
+                        
+                        fig.update_yaxes(autorange="reversed", title="", type="category", tickmode="linear", tickfont=dict(size=14, color='#333', family="Arial"), gridcolor='rgba(0,0,0,0.05)', categoryorder='array', categoryarray=orden_eje_y, automargin=True)
+                        
+                        curr = t_i.replace(hour=0, minute=0, second=0, microsecond=0)
+                        end_limit = t_f.replace(hour=0, minute=0, second=0, microsecond=0)
+                        
+                        if (end_limit - curr).days > 90:
+                            end_limit = curr + pd.Timedelta(days=90)
+                            st.warning("⚠️ El rango es muy amplio. Se muestran máximo 90 días en pantalla para evitar bloqueos.")
+                        
+                        while curr <= end_limit + pd.Timedelta(days=1):
+                            str_curr = curr.strftime("%d-%m-%Y")
+                            es_feriado = str_curr in FERIADOS_CHILE_2026
+                            es_finde = curr.weekday() >= 5
+                            
+                            if es_finde or es_feriado:
+                                label_txt = "FERIADO" if es_feriado else "SÁB / DOM"
+                                color_fill = "#D5D8DC" if es_feriado else "#FADBD8"
+                                color_line = "#ABB2B9" if es_feriado else "#E6B0AA"
+                                color_font = "#566573" if es_feriado else "#C0392B"
+                                
+                                fig.add_vrect(x0=curr.strftime("%Y-%m-%d 08:00:00"), x1=(curr + timedelta(days=1)).strftime("%Y-%m-%d 17:30:00"), fillcolor=color_fill, opacity=0.4, annotation_text=f"{label_txt} (DESCANSO)", annotation_position="top left", annotation_font_color=color_font, annotation_font_size=10, layer="below", line_width=1.5, line_dash="dot", line_color=color_line)
+                            curr += timedelta(days=1)
+                        
+                        fig.update_xaxes(range=[t_i.strftime("%Y-%m-%d 00:00:00"), t_f.strftime("%Y-%m-%d 23:59:59")], tickformat="%d/%m/%Y", dtick=86400000, title="Fecha Operativa", tickfont=dict(size=12, color='#666'), gridcolor='rgba(0,0,0,0.05)', showline=True, linewidth=1, linecolor='rgba(0,0,0,0.2)', automargin=True)
+                        
+                        altura_dinamica = max(250, len(orden_eje_y) * 85)
+                        fig.update_layout(height=altura_dinamica, margin=dict(l=250, r=30, t=60, b=80), plot_bgcolor='white', paper_bgcolor='white', legend_title_text='', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), hoverlabel=dict(bgcolor="white", font_size=13, font_family="Arial"))
                         st.plotly_chart(fig, use_container_width=True)
-                    else: st.info("Sin tareas en este rango.")
-                else: st.info("Sin tareas programadas.")
+                        
+                        html_string = fig.to_html(include_plotlyjs='cdn')
+                        b64 = base64.b64encode(html_string.encode('utf-8')).decode()
+                        st.markdown(f'<a href="data:text/html;base64,{b64}" download="Cronograma_Gantt.html" style="display: inline-block; padding: 0.5em 1em; background-color: #003366; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">📥 Descargar Gantt Interactivo (HTML)</a>', unsafe_allow_html=True)
+                    else:
+                        st.info("No hay actividades programadas en la ventana de tiempo seleccionada.")
+                else:
+                    st.info("Aún no hay actividades reales programadas para este proyecto. Use el panel superior para asignar fechas.")
 
     # === MÓDULO 4: KPIS ===
     with tab4:
@@ -698,6 +823,7 @@ def main_app():
             df_h = pd.DataFrame(h_raw) if h_raw else pd.DataFrame(columns=["id", "id_nv", "mes", "anio", "porcentaje", "monto", "estado"])
             
             with st.expander("➕ REGISTRAR GASTO OPERATIVO (Siempre en CLP)"):
+                st.info(f"💡 Los gastos se ingresan en Pesos Chilenos (CLP). Si la NV es en dólares, el sistema lo convertirá usando la tasa actual (1 USD = ${tasa_cambio} CLP).")
                 with st.form("form_gastos"):
                     c_g1, c_g2, c_g3, c_g4 = st.columns(4)
                     nv_g = c_g1.selectbox("Proyecto", [n['id_nv'] for n in obtener_nvs("Abierta")])
