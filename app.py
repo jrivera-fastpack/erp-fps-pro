@@ -682,11 +682,6 @@ def main_app():
                 # Excluir explícitamente tareas SIN PROGRAMAR y DESCANSO del gráfico
                 df_g = df_g[(df_g['comentarios'] != 'SIN_PROGRAMAR') & (df_g['comentarios'] != 'DESCANSO')]
                 
-                # Override para visualización continua y sólida en Turnos / EXTRAS (fusiona visualmente las horas)
-                mask_extras = df_g['comentarios'] == 'EXTRAS'
-                df_g.loc[mask_extras, 'start_ts'] = pd.to_datetime(df_g.loc[mask_extras, 'fecha_inicio'].astype(str) + ' 00:00:00')
-                df_g.loc[mask_extras, 'end_ts'] = pd.to_datetime(df_g.loc[mask_extras, 'fecha_fin'].astype(str) + ' 23:59:59')
-                
                 if not df_g.empty:
                     df_grp = df_g.groupby(['id_nv', 'cliente', 'Labor', 'start_ts', 'end_ts', 'progreso', 'comentarios', 'justificacion']).agg({
                         'especialista': lambda x: ", ".join(set(x))
@@ -701,8 +696,16 @@ def main_app():
                         is_paused = "[PAUSADA]" in str(r['justificacion']).upper()
                         r['Etiqueta_Barra'] = f"<b>⏸️ {bl}</b>" if is_paused else f"<b>{bl}</b>"
                         
+                        # Si es Turno o Continuo ("EXTRAS"), la barra no se corta y cubre los fines de semana.
+                        if r.get('comentarios') == 'EXTRAS':
+                            r['start_ts'] = pd.to_datetime(r['start_ts'].date()) # 00:00
+                            r['end_ts'] = pd.to_datetime(r['end_ts'].date()) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1) # 23:59:59
+                            r['Inicio'] = r['start_ts'].strftime('%d/%m/%Y %H:%M')
+                            r['Fin'] = r['end_ts'].strftime('%d/%m/%Y %H:%M')
+                            rows.append(r)
+                        
                         # Generar huecos en fines de semana/feriados si la labor es "LIBRES" (Normal)
-                        if r.get('comentarios') == 'LIBRES':
+                        elif r.get('comentarios') == 'LIBRES':
                             current_chunk_start = r['start_ts']
                             current_day = r['start_ts'].date()
                             end_day = r['end_ts'].date()
@@ -736,7 +739,6 @@ def main_app():
                                 new_r['Fin'] = r['end_ts'].strftime('%d/%m/%Y %H:%M')
                                 rows.append(new_r)
                         else:
-                            # Tareas Continuas / Turnos no se cortan
                             r['Inicio'] = r['start_ts'].strftime('%d/%m/%Y %H:%M')
                             r['Fin'] = r['end_ts'].strftime('%d/%m/%Y %H:%M')
                             rows.append(r)
@@ -979,8 +981,9 @@ def main_app():
                                 inc = 'EXTRAS' in str(row_act.get('comentarios', '')).upper()
                                 curr = f_i
                                 while curr <= f_f:
-                                    if inc or (curr.weekday() < 5 and curr.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026):
-                                        fechas_activas_matriz.add(curr)
+                                    if f_i_m <= curr <= f_f_m: # Filtro Exacto del Mes Seleccionado
+                                        if inc or (curr.weekday() < 5 and curr.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026):
+                                            fechas_activas_matriz.add(curr)
                                     curr += timedelta(days=1)
                             d_p_m = float(len(fechas_activas_matriz))
 
@@ -993,8 +996,9 @@ def main_app():
                                 inc = 'EXTRAS' in str(row_act.get('comentarios', '')).upper()
                                 curr = f_i
                                 while curr <= f_f and curr <= hoy:
-                                    if inc or (curr.weekday() < 5 and curr.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026):
-                                        fechas_activas_gantt.add(curr) 
+                                    if f_i_m <= curr <= f_f_m: # Filtro Exacto del Mes Seleccionado
+                                        if inc or (curr.weekday() < 5 and curr.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026):
+                                            fechas_activas_gantt.add(curr) 
                                     curr += timedelta(days=1)
                             d_e_t = float(len(fechas_activas_gantt))
                     
@@ -1009,7 +1013,7 @@ def main_app():
                     col_m1.metric("Presupuesto de Venta", fmt_v)
                     col_m2.metric("Total Gastos Operativos (CLP)", fmt_g_clp)
                     col_m3.metric("Avance Físico Total", f"{r_nv['Avance_%']:.1f}%")
-                    col_m4.metric("Ejecución de Tiempos (Días)", f"{d_e_t:.1f} Reales / {d_p_m:.1f} Plan", f"{(d_p_m - d_e_t):.1f} Días Restantes", delta_color="inverse" if (d_p_m - d_e_t) < 0 else "normal")
+                    col_m4.metric(f"Tiempos del Mes ({m_sel})", f"{d_e_t:.1f} Reales / {d_p_m:.1f} Plan", f"{(d_p_m - d_e_t):.1f} Días Restantes", delta_color="inverse" if (d_p_m - d_e_t) < 0 else "normal")
 
                     st.markdown("---")
                     
@@ -1030,7 +1034,7 @@ def main_app():
                         fig_b.add_trace(go.Bar(name='Real (Gantt)', x=['Tiempos del Proyecto'], y=[d_e_t], marker_color=color_real, text=[f"{d_e_t} Días Reales" if d_e_t > 0 else ""], textposition='auto', textfont=dict(weight='bold')))
                         fig_b.update_layout(
                             barmode='group', 
-                            title="Balance: Planificado (Matriz) vs Real (Gantt)", 
+                            title=f"Balance Mensual: Planificado vs Real - {m_sel} {a_sel}", 
                             yaxis_title="Cantidad de Días-Hombre", 
                             plot_bgcolor='white', 
                             height=400, 
