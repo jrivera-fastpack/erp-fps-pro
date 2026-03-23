@@ -932,16 +932,27 @@ def main_app():
                     st.plotly_chart(fig_t, use_container_width=True)
                 with cg2:
                     st.markdown(f"**Ranking de Avance Operativo (%) - {m_sel}**")
-                    df_s = df_k[df_k['tipo_servicio'] == 'SSEE'].sort_values('Avance_%', ascending=True)
-                    df_t = df_k[df_k['tipo_servicio'] == 'SE TERRENO'].sort_values('Avance_%', ascending=True)
-                    if not df_s.empty: 
-                        fig_s = px.bar(df_s, y="Proyecto_Label", x="Avance_%", color="Avance_%", color_continuous_scale=[[0, 'red'], [0.5, 'yellow'], [1, 'green']], title="🔹 SSEE (Salas Eléctricas)", text="Avance_%")
-                        fig_s.update_traces(texttemplate='%{text:.1f}%', textposition='outside'); fig_s.update_layout(xaxis_title="Avance (%)", yaxis_title="", coloraxis_showscale=False, plot_bgcolor='white', height=max(200, len(df_s)*40))
-                        st.plotly_chart(fig_s, use_container_width=True)
-                    if not df_t.empty: 
-                        fig_t_r = px.bar(df_t, y="Proyecto_Label", x="Avance_%", color="Avance_%", color_continuous_scale=[[0, 'red'], [0.5, 'yellow'], [1, 'green']], title="🔸 SE Terreno", text="Avance_%")
-                        fig_t_r.update_traces(texttemplate='%{text:.1f}%', textposition='outside'); fig_t_r.update_layout(xaxis_title="Avance (%)", yaxis_title="", coloraxis_showscale=False, plot_bgcolor='white', height=max(200, len(df_t)*40))
-                        st.plotly_chart(fig_t_r, use_container_width=True)
+                    df_s = df_k[df_k['tipo_servicio'] == 'SSEE'].sort_values('Avance_%', ascending=False)
+                    df_t = df_k[df_k['tipo_servicio'] == 'SE TERRENO'].sort_values('Avance_%', ascending=False)
+                    
+                    def render_ranking_table(df_sub, titulo):
+                        if not df_sub.empty:
+                            st.markdown(f"#### {titulo}")
+                            df_show = df_sub[['Proyecto_Label', 'Avance_%']].copy()
+                            df_show.rename(columns={'Proyecto_Label': 'Proyecto', 'Avance_%': 'Avance'}, inplace=True)
+                            
+                            def color_pct(val):
+                                if val >= 100: color = '#2ECC71'
+                                elif val >= 50: color = '#F39C12'
+                                else: color = '#E74C3C'
+                                return f'color: {color}; font-weight: bold;'
+                            
+                            st.dataframe(df_show.style.format({"Avance": "{:.1f}%"}).map(color_pct, subset=['Avance']), use_container_width=True, hide_index=True)
+                        else:
+                            st.info(f"No hay proyectos en {titulo} para este mes.")
+
+                    render_ranking_table(df_s, "🔹 SSEE (Salas Eléctricas)")
+                    render_ranking_table(df_t, "🔸 SE Terreno")
 
             with t_i:
                 st.subheader("Buscador Analítico de Proyectos")
@@ -966,7 +977,6 @@ def main_app():
                                     curr += timedelta(days=1)
                             d_p_m = float(len(fechas_activas_matriz))
 
-                        # === AQUÍ ESTÁ LA CORRECCIÓN DEL VALUERROR DE PANDAS ===
                         df_acts_proyecto = df_all_temp[(df_all_temp['id_nv'] == r_nv['id_nv']) & (df_all_temp['actividad_ssee'] != 'PROYECCION_GLOBAL') & (~df_all_temp['comentarios'].isin(['SIN_PROGRAMAR', 'DESCANSO']))]
                         if not df_acts_proyecto.empty:
                             fechas_activas_gantt = set()
