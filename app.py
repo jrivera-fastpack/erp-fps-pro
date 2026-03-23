@@ -916,8 +916,8 @@ def main_app():
                 cg1, cg2 = st.columns(2)
                 with cg1:
                     fig_t = go.Figure()
-                    fig_t.add_trace(go.Bar(name='Planificado (Matriz)', x=['Desempeño Operativo'], y=[tot_p], marker_color='#3498DB', text=[f"{tot_p} Días Planificados" if tot_p > 0 else ""], textposition='auto', textfont=dict(weight='bold')))
-                    fig_t.add_trace(go.Bar(name='Ejecutado Real (Gantt)', x=['Desempeño Operativo'], y=[tot_e], marker_color='#2ECC71', text=[f"{tot_e} Días Reales" if tot_e > 0 else ""], textposition='auto', textfont=dict(weight='bold')))
+                    fig_t.add_trace(go.Bar(name='Planificado (Matriz Semanal)', x=['Desempeño Operativo'], y=[tot_p], marker_color='#3498DB', text=[f"{tot_p} Días Planificados" if tot_p > 0 else ""], textposition='auto', textfont=dict(weight='bold')))
+                    fig_t.add_trace(go.Bar(name='Ejecutado Real (Carta Gantt)', x=['Desempeño Operativo'], y=[tot_e], marker_color='#2ECC71', text=[f"{tot_e} Días Reales" if tot_e > 0 else ""], textposition='auto', textfont=dict(weight='bold')))
                     fig_t.update_layout(
                         barmode='group', 
                         title=f"Planificado vs Real - {m_sel} {a_sel}", 
@@ -966,7 +966,8 @@ def main_app():
                                     curr += timedelta(days=1)
                             d_p_m = float(len(fechas_activas_matriz))
 
-                        df_acts_proyecto = df_all_temp[(df_all_temp['id_nv'] == r_nv['id_nv']) & (df_all_temp['actividad_ssee'] != 'PROYECCION_GLOBAL') & (df_all_temp['comentarios'] not in ['SIN_PROGRAMAR', 'DESCANSO'])]
+                        # === AQUÍ ESTÁ LA CORRECCIÓN DEL VALUERROR DE PANDAS ===
+                        df_acts_proyecto = df_all_temp[(df_all_temp['id_nv'] == r_nv['id_nv']) & (df_all_temp['actividad_ssee'] != 'PROYECCION_GLOBAL') & (~df_all_temp['comentarios'].isin(['SIN_PROGRAMAR', 'DESCANSO']))]
                         if not df_acts_proyecto.empty:
                             fechas_activas_gantt = set()
                             for _, row_act in df_acts_proyecto.iterrows():
