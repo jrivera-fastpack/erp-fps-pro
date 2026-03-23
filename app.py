@@ -1089,7 +1089,9 @@ def main_app():
                                                 st.rerun()
                                             except Exception as e:
                                                 st.error(f"❌ Error al procesar la actualización: {e}")
-        
+                    else:
+                        st.info("Utilice el panel de la izquierda para definir las actividades del alcance de este proyecto.")
+
         st.divider()
         st.subheader("3. Cronograma Operativo (Gantt)")
         
@@ -1331,11 +1333,11 @@ def main_app():
                 cg1, cg2 = st.columns(2)
                 with cg1:
                     fig_t = go.Figure()
-                    fig_t.add_trace(go.Bar(name='Planificado (Matriz Semanal)', x=['Desempeño Operativo'], y=[tot_p], marker_color='#3498DB', text=[f"{tot_p} Días Planificados"], textposition='outside', width=0.4))
-                    fig_t.add_trace(go.Bar(name='Ejecutado Real (Carta Gantt)', x=['Desempeño Operativo'], y=[tot_e], marker_color='#2ECC71', text=[f"{tot_e} Días Reales"], textposition='inside', insidetextfont=dict(color='white', weight='bold'), width=0.25))
-                    fig_t.update_layout(barmode='overlay', title=f"Planificado vs Real - {m_sel} {a_sel}", yaxis_title="Cantidad de Días-Hombre", plot_bgcolor='white', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5))
-                    fig_t.add_hline(y=c_neta, line_dash="dash", line_color="#95A5A6", annotation_text=f"Capacidad Máx. Equipo ({c_neta} Días)", annotation_position="top right", annotation_font_color="#95A5A6", annotation_font_weight="bold")
-                    fig_t.update_yaxes(range=[0, max([c_neta, tot_p, tot_e] + [1]) * 1.2])
+                    fig_t.add_trace(go.Bar(name='Planificado (Matriz)', x=['Desempeño Operativo'], y=[tot_p], marker_color='#3498DB', text=[f"{tot_p} Días Planificados" if tot_p > 0 else ""], textposition='auto', textfont=dict(weight='bold')))
+                    fig_t.add_trace(go.Bar(name='Ejecutado Real (Gantt)', x=['Desempeño Operativo'], y=[tot_e], marker_color='#2ECC71', text=[f"{tot_e} Días Reales" if tot_e > 0 else ""], textposition='auto', textfont=dict(weight='bold')))
+                    fig_t.update_layout(barmode='group', title=f"Planificado vs Real - {m_sel} {a_sel}", yaxis_title="Cantidad de Días-Hombre", plot_bgcolor='white', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5))
+                    fig_t.add_hline(y=c_neta, line_dash="dash", line_color="#95A5A6", annotation_text=f"Capacidad Máx. ({c_neta} Días)", annotation_position="top right", annotation_font_color="#95A5A6", annotation_font_weight="bold")
+                    fig_t.update_yaxes(range=[0, max([c_neta, tot_p, tot_e, 5]) * 1.2])
                     st.plotly_chart(fig_t, use_container_width=True)
                 with cg2:
                     st.markdown(f"**Ranking de Avance Operativo (%) - {m_sel}**")
@@ -1414,10 +1416,11 @@ def main_app():
                     cg1, cg2 = st.columns([1, 1.5])
                     with cg1:
                         fig_b = go.Figure()
-                        fig_b.add_trace(go.Bar(name='Planificado (Matriz Semanal)', x=['Tiempos del Proyecto'], y=[d_p_m], marker_color='#3498DB', text=[f"{d_p_m} Días Planificados"], textposition='outside', width=0.4))
-                        fig_b.add_trace(go.Bar(name='Real (Carta Gantt)', x=['Tiempos del Proyecto'], y=[d_e_t], marker_color="#E74C3C" if d_e_t > d_p_m else "#2ECC71", text=[f"{d_e_t} Días Reales"], textposition='inside', insidetextfont=dict(color='white', weight='bold'), width=0.25))
-                        fig_b.update_layout(barmode='overlay', title="Balance: Planificado (Matriz) vs Real (Gantt)", yaxis_title="Cantidad de Días-Hombre", plot_bgcolor='white', height=350, margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5))
-                        fig_b.update_yaxes(range=[0, max(d_p_m, d_e_t) * 1.2])
+                        fig_b.add_trace(go.Bar(name='Planificado (Matriz)', x=['Tiempos del Proyecto'], y=[d_p_m], marker_color='#3498DB', text=[f"{d_p_m} Días Planificados" if d_p_m > 0 else ""], textposition='auto', textfont=dict(weight='bold')))
+                        color_real = "#E74C3C" if d_e_t > d_p_m else "#2ECC71"
+                        fig_b.add_trace(go.Bar(name='Real (Gantt)', x=['Tiempos del Proyecto'], y=[d_e_t], marker_color=color_real, text=[f"{d_e_t} Días Reales" if d_e_t > 0 else ""], textposition='auto', textfont=dict(weight='bold')))
+                        fig_b.update_layout(barmode='group', title="Balance: Planificado (Matriz) vs Real (Gantt)", yaxis_title="Cantidad de Días-Hombre", plot_bgcolor='white', height=350, margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5))
+                        fig_b.update_yaxes(range=[0, max([d_p_m, d_e_t, 2]) * 1.2])
                         st.plotly_chart(fig_b, use_container_width=True)
 
                         st.markdown("**📝 Comentarios y Detalles de Ejecución**")
