@@ -841,17 +841,31 @@ def main_app():
             
             asig_all_raw = supabase.table("asignaciones_personal").select("*").execute().data
             df_ausencias = pd.DataFrame([a for a in asig_all_raw if a['id_nv'] == 'AUSENCIA']) if asig_all_raw else pd.DataFrame()
-            df_hh_raw = pd.DataFrame([a for a in asig_all_raw if a['id_nv'] not in ['AUSENCIA', 'INTERNO'] and a['comentarios'] not in ['SIN_PROGRAMAR', 'DESCANSO']]) if asig_all_raw else pd.DataFrame()
             
-            if not df_hh_raw.empty:
-                df_hh_raw['hd'] = pd.to_numeric(df_hh_raw['horas_diarias'], errors='coerce').fillna(9.0)
-                df_hh_raw.loc[df_hh_raw['hd'] <= 0, 'hd'] = 9.0
-                df_hh_raw['d_eje'] = pd.to_numeric(df_hh_raw['hh_asignadas'], errors='coerce').fillna(0) / df_hh_raw['hd']
-                df_hh_agg = df_hh_raw.groupby('id_nv')['d_eje'].sum().reset_index()
-                
-                # CORRECCIÓN DE KPI GENERAL DE AVANCES BASADO ESTRICTAMENTE EN ALCANCE ASIGNADO
-                df_p = df_hh_raw.groupby(['id_nv', 'actividad_ssee'])['progreso'].max().reset_index().groupby('id_nv')['progreso'].mean().reset_index()
-                df_hh_agg = df_hh_agg.merge(df_p, on='id_nv', how='left').rename(columns={'progreso': 'Avance_%'})
+            df_nv_all_acts = pd.DataFrame([a for a in asig_all_raw if a['id_nv'] not in ['AUSENCIA', 'INTERNO']]) if asig_all_raw else pd.DataFrame()
+            
+            if not df_nv_all_acts.empty:
+                # Días ejecutados: excluir SIN_PROGRAMAR y DESCANSO
+                df_eje = df_nv_all_acts[~df_nv_all_acts['comentarios'].isin(['SIN_PROGRAMAR', 'DESCANSO'])].copy()
+                if not df_eje.empty:
+                    df_eje['hd'] = pd.to_numeric(df_eje['horas_diarias'], errors='coerce').fillna(9.0)
+                    df_eje.loc[df_eje['hd'] <= 0, 'hd'] = 9.0
+                    df_eje['d_eje'] = pd.to_numeric(df_eje['hh_asignadas'], errors='coerce').fillna(0) / df_eje['hd']
+                    df_hh_agg = df_eje.groupby('id_nv')['d_eje'].sum().reset_index()
+                else:
+                    df_hh_agg = pd.DataFrame(columns=['id_nv', 'd_eje'])
+                    
+                # Avance: excluir PROYECCION_GLOBAL (incluir SIN_PROGRAMAR para promediar a 0 si no se ha hecho)
+                df_prog_base = df_nv_all_acts[df_nv_all_acts['actividad_ssee'] != 'PROYECCION_GLOBAL'].copy()
+                if not df_prog_base.empty:
+                    df_p = df_prog_base.groupby(['id_nv', 'actividad_ssee'])['progreso'].max().reset_index()
+                    df_p = df_p.groupby('id_nv')['progreso'].mean().reset_index()
+                else:
+                    df_p = pd.DataFrame(columns=['id_nv', 'progreso'])
+                    
+                df_hh_agg = df_hh_agg.merge(df_p, on='id_nv', how='outer').rename(columns={'progreso': 'Avance_%'})
+                df_hh_agg['d_eje'] = df_hh_agg['d_eje'].fillna(0)
+                df_hh_agg['Avance_%'] = df_hh_agg['Avance_%'].fillna(0)
             else: 
                 df_hh_agg = pd.DataFrame(columns=['id_nv', 'd_eje', 'Avance_%'])
             
@@ -1320,15 +1334,17 @@ def main_app():
                     info_nv = next(n for n in nvs_abiertas if n['id_nv'] == nv_c_id)
                     asig_list_raw = supabase.table("asignaciones_personal").select("*").eq("id_nv", nv_c_id).execute().data
                     
-                    asig_list = [a for a in asig_list_raw if a.get('actividad_ssee') != 'PROYECCION_GLOBAL' and a.get('comentarios') not in ['SIN_PROGRAMAR', 'DESCANSO']] if asig_list_raw else []
+                    asig_list_prog = [a for a in asig_list_raw if a.get('actividad_ssee') != 'PROYECCION_GLOBAL'] if asig_list_raw else []
+                    asig_list_hh = [a for a in asig_list_raw if a.get('actividad_ssee') != 'PROYECCION_GLOBAL' and a.get('comentarios') not in ['SIN_PROGRAMAR', 'DESCANSO']] if asig_list_raw else []
+                    
                     gastos_list = supabase.table("control_gastos").select("*").eq("id_nv", nv_c_id).execute().data
                     
-                    sum_hh = sum(a['hh_asignadas'] for a in asig_list) if asig_list else 0
+                    sum_hh = sum(a['hh_asignadas'] for a in asig_list_hh) if asig_list_hh else 0
                     dias_ejecutados = sum_hh / 9.0
                     sum_gas_bruto = sum(g['monto_gasto'] for g in gastos_list) if gastos_list else 0
                     
-                    if asig_list:
-                        df_avances = pd.DataFrame(asig_list)
+                    if asig_list_prog:
+                        df_avances = pd.DataFrame(asig_list_prog)
                         avg_prog = df_avances.groupby('actividad_ssee')['progreso'].max().mean()
                     else:
                         avg_prog = 0
@@ -1373,10 +1389,11 @@ def main_app():
                     pdf.cell(0, 10, "DETALLE DE OPERACIONES EJECUTADAS", ln=True)
                     pdf.set_font("Arial", '', 10)
                     
-                    if asig_list:
+                    if asig_list_prog:
                         for act, group in df_avances.groupby('actividad_ssee'):
                             prog = group['progreso'].max()
-                            esp_list = ", ".join(group['especialista'].unique())
+                            esp_list = ", ".join([e for e in group['especialista'].unique() if e != "Sin Asignar"])
+                            if not esp_list: esp_list = "Sin Asignar"
                             linea = f"> {act} ({prog}%) | Tecnicos: {esp_list}"
                             # Reemplazar caracteres especiales conflictivos
                             linea = linea.encode('latin-1', 'replace').decode('latin-1')
