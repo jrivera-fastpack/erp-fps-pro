@@ -33,20 +33,30 @@ def init_connection():
 try:
     supabase: Client = init_connection()
 except Exception:
-    st.error("Error crítico: No se pudo conectar a la base de datos Supabase. Verifique secrets.toml.")
+    st.error("Error crítico: No se pudo conectar a la base de datos Supabase. Verifique secrets.toml o la configuración en Streamlit Cloud.")
     st.stop()
 
-# --- INICIALIZACIÓN DE PROYECTOS INTERNOS ---
+# --- INICIALIZACIÓN DE PROYECTOS INTERNOS (RRHH Y OPERACIONES) ---
 try:
     aus_nv = supabase.table("notas_venta").select("id_nv").eq("id_nv", "AUSENCIA").execute()
     if not aus_nv.data:
-        supabase.table("notas_venta").insert({"id_nv": "AUSENCIA", "cliente": "Gestión Interna (RRHH)", "tipo_servicio": "SE TERRENO", "lugar": "Oficina/Casa", "moneda": "CLP", "monto_vendido": 0.0, "hh_vendidas": 0.0, "estado": "Abierta"}).execute()
+        supabase.table("notas_venta").insert({
+            "id_nv": "AUSENCIA", "cliente": "Gestión Interna (RRHH)", "tipo_servicio": "SE TERRENO", 
+            "lugar": "Oficina/Casa", "moneda": "CLP", "monto_vendido": 0.0, 
+            "hh_vendidas": 0.0, "estado": "Abierta"
+        }).execute()
+        
     int_nv = supabase.table("notas_venta").select("id_nv").eq("id_nv", "INTERNO").execute()
     if not int_nv.data:
-        supabase.table("notas_venta").insert({"id_nv": "INTERNO", "cliente": "Gestión Interna (Operaciones)", "tipo_servicio": "SE TERRENO", "lugar": "Oficina/Nave FPS", "moneda": "CLP", "monto_vendido": 0.0, "hh_vendidas": 0.0, "estado": "Abierta"}).execute()
+        supabase.table("notas_venta").insert({
+            "id_nv": "INTERNO", "cliente": "Gestión Interna (Operaciones)", "tipo_servicio": "SE TERRENO", 
+            "lugar": "Oficina/Nave FPS", "moneda": "CLP", "monto_vendido": 0.0, 
+            "hh_vendidas": 0.0, "estado": "Abierta"
+        }).execute()
 except Exception:
     pass
 
+# --- FUNCIÓN DE INSERCIÓN BLINDADA ---
 def safe_insert_asignacion(payload):
     try:
         return supabase.table("asignaciones_personal").insert(payload).execute()
@@ -57,15 +67,35 @@ def safe_insert_asignacion(payload):
             for col in ["dias_extras", "justificacion", "hora_inicio_t", "hora_fin_t", "horas_diarias"]:
                 payload_clean.pop(col, None)
             res = supabase.table("asignaciones_personal").insert(payload_clean).execute()
-            st.toast("⚠️ BD desactualizada. Ejecute comandos SQL para activar todas las funciones.", icon="⚠️")
+            st.toast("⚠️ Base de datos desactualizada. Ejecute comandos SQL para activar horarios personalizados y KPIs.", icon="⚠️")
             return res
         else:
             raise ex_db
 
 # --- CONSTANTES GLOBALES ---
-ESPECIALISTAS = ["Felipe Romero", "David Colina", "Adelmo Calderon", "Jose Valenzuela", "Jose Peña", "German Contreras", "Esteban Romero", "Nicolas Salazar", "Javier Segovia", "Jonathan Aguilar", "Ignacio Castro", "Javier Rivera"]
-ABREVIATURAS = {"Entrega materiales": "Mat", "Montaje de detección": "M.Det", "Montaje de supresión": "M.Sup", "Montaje de VESDA": "M.VESDA", "Cableado y conexionado": "Cabl", "Programación": "Prog", "PEM": "PEM", "Entrega de red line": "RedLine"}
-FERIADOS_CHILE_2026 = ["01-01-2026", "03-04-2026", "04-04-2026", "01-05-2026", "21-05-2026", "29-06-2026", "16-07-2026", "15-08-2026", "18-09-2026", "19-09-2026", "12-10-2026", "31-10-2026", "01-11-2026", "08-12-2026", "25-12-2026"]
+ESPECIALISTAS = [
+    "Felipe Romero", "David Colina", "Adelmo Calderon", "Jose Valenzuela", 
+    "Jose Peña", "German Contreras", "Esteban Romero", "Nicolas Salazar", 
+    "Javier Segovia", "Jonathan Aguilar", "Ignacio Castro", "Javier Rivera"
+]
+
+ABREVIATURAS = {
+    "Entrega materiales": "Mat", 
+    "Montaje de detección": "M.Det", 
+    "Montaje de supresión": "M.Sup", 
+    "Montaje de VESDA": "M.VESDA",
+    "Cableado y conexionado": "Cabl", 
+    "Programación": "Prog", 
+    "PEM": "PEM", 
+    "Entrega de red line": "RedLine"
+}
+
+FERIADOS_CHILE_2026 = [
+    "01-01-2026", "03-04-2026", "04-04-2026", "01-05-2026", "21-05-2026", 
+    "29-06-2026", "16-07-2026", "15-08-2026", "18-09-2026", "19-09-2026", 
+    "12-10-2026", "31-10-2026", "01-11-2026", "08-12-2026", "25-12-2026"
+]
+
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 MESES_ES = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
 LISTA_MODALIDADES = [
@@ -900,20 +930,32 @@ def main_app():
                 
                 c_neta = int((d_hab_m * len(ESPECIALISTAS)) - dias_ausencia_mes)
                 
-                tot_p, tot_e, hoy = 0, 0, datetime.today().date()
+                dias_planificados = set()
+                dias_reales = set()
+                
                 if not df_all_valid.empty:
                     for _, a in df_all_valid.iterrows():
                         try:
                             fi, ff = pd.to_datetime(a['fecha_inicio']).date(), pd.to_datetime(a['fecha_fin']).date()
                         except: continue
+                        
+                        esp = a.get('especialista')
+                        if not esp or esp not in ESPECIALISTAS: continue
+                            
                         os_d, oe = max(fi, f_i_m), min(ff, f_f_m)
                         if os_d <= oe:
                             inc = 'EXTRAS' in str(a.get('comentarios', '')).upper()
-                            if a.get('actividad_ssee') == 'PROYECCION_GLOBAL':
-                                tot_p += sum(1 for i in range((oe - os_d).days + 1) if inc or ((os_d+timedelta(days=i)).weekday() < 5 and (os_d+timedelta(days=i)).strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026))
-                            else:
-                                re = min(oe, hoy)
-                                if os_d <= re: tot_e += sum(1 for i in range((re - os_d).days + 1) if inc or ((os_d+timedelta(days=i)).weekday() < 5 and (os_d+timedelta(days=i)).strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026))
+                            curr = os_d
+                            while curr <= oe:
+                                if inc or (curr.weekday() < 5 and curr.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026):
+                                    if a.get('actividad_ssee') == 'PROYECCION_GLOBAL':
+                                        dias_planificados.add((curr, esp))
+                                    else:
+                                        dias_reales.add((curr, esp))
+                                curr += timedelta(days=1)
+                                
+                tot_p = len(dias_planificados)
+                tot_e = len(dias_reales)
                 
                 c1, c2 = st.columns(2)
                 c1.metric("Cartera Ofertada Consolidada", f"USD ${sum(r['monto_vendido'] if r['moneda']=='USD' else r['monto_vendido']/tasa_cambio for _,r in df_k.iterrows()):,.2f}")
@@ -995,7 +1037,7 @@ def main_app():
                                 f_f = pd.to_datetime(row_act['fecha_fin']).date()
                                 inc = 'EXTRAS' in str(row_act.get('comentarios', '')).upper()
                                 curr = f_i
-                                while curr <= f_f and curr <= hoy:
+                                while curr <= f_f:
                                     if f_i_m <= curr <= f_f_m: # Filtro Exacto del Mes Seleccionado
                                         if inc or (curr.weekday() < 5 and curr.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026):
                                             fechas_activas_gantt.add(curr) 
