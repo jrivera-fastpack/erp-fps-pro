@@ -933,6 +933,7 @@ def main_app():
                 dias_planificados = set()
                 dias_reales = set()
                 
+                hoy = datetime.today().date()
                 if not df_all_valid.empty:
                     for _, a in df_all_valid.iterrows():
                         try:
@@ -951,7 +952,8 @@ def main_app():
                                     if a.get('actividad_ssee') == 'PROYECCION_GLOBAL':
                                         dias_planificados.add((curr, esp))
                                     else:
-                                        dias_reales.add((curr, esp))
+                                        if curr <= hoy:
+                                            dias_reales.add((curr, esp))
                                 curr += timedelta(days=1)
                                 
                 tot_p = len(dias_planificados)
@@ -1038,7 +1040,7 @@ def main_app():
                                 inc = 'EXTRAS' in str(row_act.get('comentarios', '')).upper()
                                 curr = f_i
                                 while curr <= f_f:
-                                    if f_i_m <= curr <= f_f_m: # Filtro Exacto del Mes Seleccionado
+                                    if f_i_m <= curr <= f_f_m and curr <= hoy: # Filtro Exacto del Mes Seleccionado y hasta el día de Hoy
                                         if inc or (curr.weekday() < 5 and curr.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026):
                                             fechas_activas_gantt.add(curr) 
                                     curr += timedelta(days=1)
