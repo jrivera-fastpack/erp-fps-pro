@@ -530,8 +530,8 @@ def main_app():
                     df_temp['key_grupo'] = df_temp['actividad_ssee'].fillna("General")
                     actividades_unicas = df_temp['key_grupo'].unique()
                     
-                    # CORRECCIÓN DE CÁLCULO DE AVANCE: PROMEDIO SOBRE LAS ACTIVIDADES REALMENTE AÑADIDAS
-                    avance_total = df_temp.groupby('key_grupo')['progreso'].max().mean()
+                    # CORRECCIÓN DE CÁLCULO DE AVANCE: PROMEDIO DINÁMICO SOBRE LAS ACTIVIDADES REALMENTE AÑADIDAS
+                    avance_total = min(100.0, max(0.0, df_temp.groupby('key_grupo')['progreso'].max().mean()))
                     st.markdown(f"**Avance Total del Proyecto: {avance_total:.1f}%**")
                     st.progress(int(avance_total))
                     st.markdown("---")
@@ -623,14 +623,54 @@ def main_app():
                 df_g = df_g[df_g['comentarios'] != 'SIN_PROGRAMAR']
                 
                 if not df_g.empty:
-                    df_grp = df_g.groupby(['id_nv', 'actividad_ssee', 'start_ts', 'end_ts', 'progreso', 'justificacion']).agg({'especialista': lambda x: ", ".join(set(x))}).reset_index()
+                    df_grp = df_g.groupby(['id_nv', 'actividad_ssee', 'start_ts', 'end_ts', 'progreso', 'comentarios', 'justificacion']).agg({'especialista': lambda x: ", ".join(set(x))}).reset_index()
                     df_grp['Eje_Y'] = df_grp['id_nv'] + " | " + df_grp['actividad_ssee']
                     
                     rows = []
                     for _, r in df_grp.iterrows():
                         bl = f"{r['id_nv'].split(' - ')[0]} ({r['progreso']}%)"
-                        r['Etiqueta_Barra'] = f"<b>⏸️ {bl}</b>" if "[PAUSADA]" in str(r['justificacion']).upper() else f"<b>{bl}</b>"
-                        rows.append(r)
+                        is_paused = "[PAUSADA]" in str(r['justificacion']).upper()
+                        r['Etiqueta_Barra'] = f"<b>⏸️ {bl}</b>" if is_paused else f"<b>{bl}</b>"
+                        
+                        # RESTAURACIÓN LOGICA: Generar huecos en fines de semana/feriados si la labor es "LIBRES" (Normal)
+                        if r.get('comentarios') == 'LIBRES':
+                            current_chunk_start = r['start_ts']
+                            current_day = r['start_ts'].date()
+                            end_day = r['end_ts'].date()
+                            
+                            while current_day <= end_day:
+                                es_feriado = current_day.strftime("%d-%m-%Y") in FERIADOS_CHILE_2026
+                                es_finde = current_day.weekday() >= 5
+                                
+                                if es_finde or es_feriado:
+                                    prev_day = current_day - timedelta(days=1)
+                                    if current_chunk_start is not None and current_chunk_start.date() <= prev_day:
+                                        chunk_end = pd.Timestamp.combine(prev_day, r['end_ts'].time())
+                                        new_r = r.copy()
+                                        new_r['start_ts'] = current_chunk_start
+                                        new_r['end_ts'] = chunk_end
+                                        new_r['Inicio'] = current_chunk_start.strftime('%d/%m/%Y %H:%M')
+                                        new_r['Fin'] = chunk_end.strftime('%d/%m/%Y %H:%M')
+                                        rows.append(new_r)
+                                    current_chunk_start = None
+                                else:
+                                    if current_chunk_start is None:
+                                        current_chunk_start = pd.Timestamp.combine(current_day, r['start_ts'].time())
+                                        
+                                current_day += timedelta(days=1)
+                            
+                            if current_chunk_start is not None and current_chunk_start <= r['end_ts']:
+                                new_r = r.copy()
+                                new_r['start_ts'] = current_chunk_start
+                                new_r['end_ts'] = r['end_ts']
+                                new_r['Inicio'] = current_chunk_start.strftime('%d/%m/%Y %H:%M')
+                                new_r['Fin'] = r['end_ts'].strftime('%d/%m/%Y %H:%M')
+                                rows.append(new_r)
+                        else:
+                            # Tareas Continuas / Turnos no se cortan
+                            r['Inicio'] = r['start_ts'].strftime('%d/%m/%Y %H:%M')
+                            r['Fin'] = r['end_ts'].strftime('%d/%m/%Y %H:%M')
+                            rows.append(r)
                     
                     df_p = pd.DataFrame(rows)
                     t_i = pd.to_datetime(d_ini_g)
@@ -639,7 +679,8 @@ def main_app():
                     
                     if not df_p.empty:
                         fig = px.timeline(df_p, x_start="start_ts", x_end="end_ts", y="Eje_Y", color="actividad_ssee", text="Etiqueta_Barra", color_discrete_sequence=px.colors.qualitative.Set1)
-                        fig.update_traces(textposition='auto', insidetextanchor='middle', textfont=dict(size=14, color='black'), marker_line_width=0, opacity=0.95)
+                        # Textos ajustados para no recortarse en barras pequeñas
+                        fig.update_traces(textposition='auto', textfont=dict(size=13, color='black', family="Arial"), marker_line_width=0, opacity=0.95, constraintext='none')
                         fig.update_yaxes(autorange="reversed", title="", tickfont=dict(size=14))
                         fig.update_xaxes(range=[t_i.strftime("%Y-%m-%d 00:00:00"), t_f.strftime("%Y-%m-%d 23:59:59")], dtick=86400000, tickformat="%d/%m", title="")
                         fig.update_layout(height=max(250, len(df_p['Eje_Y'].unique())*80), plot_bgcolor='white', legend=dict(orientation="h", y=1.05))
