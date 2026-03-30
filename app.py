@@ -1027,7 +1027,7 @@ def main_app():
                                 while curr <= f_f:
                                     if f_i_m <= curr <= f_f_m: # Filtro Exacto del Mes Seleccionado
                                         if inc or (curr.weekday() < 5 and curr.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026):
-                                            fechas_activas_matriz.add(curr)
+                                            fechas_activas_matriz.add((curr, row_act.get('especialista')))
                                     curr += timedelta(days=1)
                             d_p_m = float(len(fechas_activas_matriz))
 
@@ -1040,9 +1040,9 @@ def main_app():
                                 inc = 'EXTRAS' in str(row_act.get('comentarios', '')).upper()
                                 curr = f_i
                                 while curr <= f_f:
-                                    if f_i_m <= curr <= f_f_m and curr <= hoy: # Filtro Exacto del Mes Seleccionado y hasta el día de Hoy
+                                    if f_i_m <= curr <= f_f_m and curr <= hoy: # Filtro Exacto del Mes y Solo hasta HOY
                                         if inc or (curr.weekday() < 5 and curr.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026):
-                                            fechas_activas_gantt.add(curr) 
+                                            fechas_activas_gantt.add((curr, row_act.get('especialista'))) 
                                     curr += timedelta(days=1)
                             d_e_t = float(len(fechas_activas_gantt))
                     
@@ -1129,6 +1129,7 @@ def main_app():
                 dat_oc = []
                 for esp in ESPECIALISTAS:
                     ds, dt, di, da = set(), set(), set(), set()
+                    dias_turno = set()
                     for a in [x for x in asig_all_raw if x.get('especialista')==esp and x.get('comentarios')!='SIN_PROGRAMAR'] if asig_all_raw else []:
                         try: fi, ff = pd.to_datetime(a['fecha_inicio']).date(), pd.to_datetime(a['fecha_fin']).date()
                         except: continue
@@ -1137,6 +1138,8 @@ def main_app():
                         es_desc = a.get('comentarios') == 'DESCANSO'
                         curr, end_curr = max(fi, f_i_m), min(ff, f_f_m)
                         while curr <= end_curr:
+                            if inc or es_desc:
+                                dias_turno.add(curr)
                             if inc or es_desc or (curr.weekday() < 5 and curr.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026):
                                 if ts == 'AUSENCIA': da.add(curr)
                                 elif ts == 'INTERNO': di.add(curr)
@@ -1147,15 +1150,22 @@ def main_app():
                     ds, dt, di = ds - da, dt - da, di - da
                     d_graf = len(ds) if f_oc=="⚡ SSEE" else (len(dt) if f_oc=="👷 SE Terreno" else (len(di) if f_oc=="🏢 Oficina / Interno" else len(ds|dt|di)))
                     
+                    base_personal = 0
+                    for d in dias_m:
+                        if d in dias_turno:
+                            base_personal += 1
+                        elif d.weekday() < 5 and d.strftime("%d-%m-%Y") not in FERIADOS_CHILE_2026:
+                            base_personal += 1
+                    
                     dat_oc.append({
                         "Especialista": esp, "Trabajados": d_graf, "Días SSEE": len(ds), "Días SE Terreno": len(dt), 
-                        "Días Oficina": len(di), "Días Ausente": len(da), "Disponibles": max(0, tot_d_m - d_graf), 
-                        "%": round((d_graf/tot_d_m*100) if tot_d_m>0 else 0, 1)
+                        "Días Oficina": len(di), "Días Ausente": len(da), "Disponibles": max(0, base_personal - d_graf), 
+                        "%": round((d_graf/base_personal*100) if base_personal>0 else 0, 1)
                     })
                 
                 df_oc = pd.DataFrame(dat_oc).sort_values("%", ascending=False)
                 fig_oc = px.bar(df_oc, x="Especialista", y=["Trabajados", "Disponibles"], title=f"Distribución de Tiempos por Técnico - {m_sel} {a_sel} ({f_oc})", color_discrete_map={"Trabajados": "#3498DB", "Disponibles": "#2ECC71"})
-                fig_oc.update_layout(yaxis_title=f"Cantidad de Días (Total Mes: {tot_d_m})", plot_bgcolor='white', barmode='stack', legend_title_text="Estado")
+                fig_oc.update_layout(yaxis_title="Cantidad de Días (Base Personalizada)", plot_bgcolor='white', barmode='stack', legend_title_text="Estado")
                 st.plotly_chart(fig_oc, use_container_width=True)
                 
                 st.markdown("**Tabla General Detallada (Todas las Métricas)**")
@@ -1220,12 +1230,35 @@ def main_app():
                     with st.expander("🔄 Actualizar Estado de Factura"):
                         h_real = df_hm[df_hm['id'].astype(str).str.isnumeric()]
                         if not h_real.empty:
-                            c_up1, c_up2 = st.columns(2)
-                            id_h_up = c_up1.selectbox("ID de Parcialidad:", h_real['id'].tolist())
+                            c_up1, c_up2 = st.columns([2, 1])
+                            
+                            hitos_dict = {}
+                            for _, r in h_real.iterrows():
+                                mon = r.get('moneda', 'CLP')
+                                mto = float(r.get('monto', 0))
+                                try: pct = float(str(r.get('porcentaje', 0)).replace('%', ''))
+                                except: pct = 0.0
+                                
+                                monto_fmt = f"{mon} ${mto:,.0f}".replace(",", ".") if mon == 'CLP' else f"{mon} ${mto:,.2f}"
+                                lbl = f"NV: {r['id_nv']} | Cobro: {pct:.1f}% | {monto_fmt}"
+                                hitos_dict[lbl] = {"id": r['id'], "id_nv": r['id_nv']}
+                            
+                            sel_hito_lbl = c_up1.selectbox("Seleccione la Parcialidad (Hito) a Actualizar:", list(hitos_dict.keys()))
                             nuevo_est_h = c_up2.selectbox("Nuevo Estado:", ["Pendiente", "Facturada", "Postergada"])
-                            if st.button("Actualizar Hito", use_container_width=True):
-                                supabase.table("hitos_facturacion").update({"estado": nuevo_est_h}).eq("id", id_h_up).execute()
-                                st.success("Actualizado."); st.rerun()
+                            
+                            if st.button("Actualizar Hito y Proyecto", use_container_width=True):
+                                hito_selec = hitos_dict[sel_hito_lbl]
+                                h_id = hito_selec["id"]
+                                h_nv = hito_selec["id_nv"]
+                                
+                                supabase.table("hitos_facturacion").update({"estado": nuevo_est_h}).eq("id", h_id).execute()
+                                
+                                if nuevo_est_h == "Facturada":
+                                    supabase.table("notas_venta").update({"estado": "Cerrada", "estado_facturacion": "Facturada"}).eq("id_nv", h_nv).execute()
+                                    st.success(f"✅ Factura actualizada. La Nota de Venta '{h_nv}' se ha cerrado automáticamente.")
+                                else:
+                                    st.success("✅ Estado del hito actualizado.")
+                                st.rerun()
                         else: st.info("Los pronósticos automáticos se volverán facturas reales cuando crees sus hitos manualmente abajo.")
                 else: st.write("No hay parcialidades de facturación programadas para este mes.")
                 
