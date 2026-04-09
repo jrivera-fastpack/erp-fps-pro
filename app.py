@@ -1233,10 +1233,10 @@ def main_app():
                     with col_chart:
                         if monto_facturado > 0 or monto_pronosticado > 0:
                             df_donut = pd.DataFrame({
-                                'Estado': ['Facturado', 'Pronosticado / Pendiente'],
+                                'Estado': ['Facturado', 'Pendiente de Facturación'],
                                 'Monto (CLP)': [monto_facturado, monto_pronosticado]
                             })
-                            fig_donut = px.pie(df_donut, values='Monto (CLP)', names='Estado', hole=0.4, color='Estado', color_discrete_map={'Facturado': '#2ECC71', 'Pronosticado / Pendiente': '#3498DB'})
+                            fig_donut = px.pie(df_donut, values='Monto (CLP)', names='Estado', hole=0.4, color='Estado', color_discrete_map={'Facturado': '#2ECC71', 'Pendiente de Facturación': '#3498DB'})
                             fig_donut.update_traces(textinfo='percent+label', textfont_size=12)
                             fig_donut.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
                             st.plotly_chart(fig_donut, use_container_width=True)
@@ -1246,14 +1246,11 @@ def main_app():
                         st.markdown("<br>", unsafe_allow_html=True)
                         c_met_a, c_met_b = st.columns(2)
                         c_met_a.metric("✅ Facturado a la fecha (CLP)", f"${monto_facturado:,.0f}".replace(",", "."))
-                        c_met_b.metric("⏳ Pronosticado / Pendiente (CLP)", f"${monto_pronosticado:,.0f}".replace(",", "."))
+                        c_met_b.metric("⏳ Pendiente de Facturación (CLP)", f"${monto_pronosticado:,.0f}".replace(",", "."))
                         
                         st.markdown("<hr style='margin: 10px 0; opacity: 0.2;'>", unsafe_allow_html=True)
                         
-                        c_met_c, c_met_d = st.columns(2)
-                        c_met_c.metric("🎯 Total Esperado del Mes (CLP)", f"${(monto_facturado + monto_pronosticado):,.0f}".replace(",", "."))
-                        diferencia_fact = monto_pronosticado - monto_facturado
-                        c_met_d.metric("⚖️ Diferencia (Pendiente - Fact)", f"${diferencia_fact:,.0f}".replace(",", "."))
+                        st.metric("🎯 Total Esperado del Mes (CLP)", f"${(monto_facturado + monto_pronosticado):,.0f}".replace(",", "."))
                     
                     st.divider()
                     
