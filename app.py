@@ -714,6 +714,11 @@ def main_app():
                 # Excluir explícitamente tareas SIN PROGRAMAR y DESCANSO del gráfico
                 df_g = df_g[(df_g['comentarios'] != 'SIN_PROGRAMAR') & (df_g['comentarios'] != 'DESCANSO')]
                 
+                # Override para visualización continua y sólida en Turnos / EXTRAS (fusiona visualmente las horas)
+                mask_extras = df_g['comentarios'] == 'EXTRAS'
+                df_g.loc[mask_extras, 'start_ts'] = pd.to_datetime(df_g.loc[mask_extras, 'fecha_inicio'].astype(str) + ' 00:00:00')
+                df_g.loc[mask_extras, 'end_ts'] = pd.to_datetime(df_g.loc[mask_extras, 'fecha_fin'].astype(str) + ' 23:59:59')
+                
                 if not df_g.empty:
                     df_grp = df_g.groupby(['id_nv', 'cliente', 'Labor', 'start_ts', 'end_ts', 'progreso', 'comentarios', 'justificacion']).agg({
                         'especialista': lambda x: ", ".join(set(x))
@@ -821,6 +826,20 @@ def main_app():
                         if (end_limit - curr).days > 90:
                             end_limit = curr + pd.Timedelta(days=90)
                             st.warning("⚠️ El rango es muy amplio. Se muestran máximo 90 días en pantalla para evitar bloqueos.")
+                        
+                        while curr <= end_limit + pd.Timedelta(days=1):
+                            str_curr = curr.strftime("%d-%m-%Y")
+                            es_feriado = str_curr in FERIADOS_CHILE_2026
+                            es_finde = curr.weekday() >= 5
+                            
+                            if es_finde or es_feriado:
+                                label_txt = "FERIADO" if es_feriado else "SÁB / DOM"
+                                color_fill = "#D5D8DC" if es_feriado else "#FADBD8"
+                                color_line = "#ABB2B9" if es_feriado else "#E6B0AA"
+                                color_font = "#566573" if es_feriado else "#C0392B"
+                                
+                                fig.add_vrect(x0=curr.strftime("%Y-%m-%d 08:00:00"), x1=(curr + timedelta(days=1)).strftime("%Y-%m-%d 17:30:00"), fillcolor=color_fill, opacity=0.4, annotation_text=f"{label_txt} (DESCANSO)", annotation_position="top left", annotation_font_color=color_font, annotation_font_size=10, layer="below", line_width=1.5, line_dash="dot", line_color=color_line)
+                            curr += timedelta(days=1)
                         
                         fig.update_xaxes(range=[t_i.strftime("%Y-%m-%d 00:00:00"), t_f.strftime("%Y-%m-%d 23:59:59")], tickformat="%d/%m/%Y", dtick=86400000, title="Fecha Operativa", tickfont=dict(size=12, color='#666'), gridcolor='rgba(0,0,0,0.05)', showline=True, linewidth=1, linecolor='rgba(0,0,0,0.2)', automargin=True)
                         
@@ -1214,25 +1233,10 @@ def main_app():
                     monto_facturado = df_hm[df_hm['estado'] == 'Facturada']['clp'].sum()
                     monto_pronosticado = df_hm[df_hm['estado'] != 'Facturada']['clp'].sum()
                     
-                    st.markdown("#### 📊 Balance: Facturado vs Pronosticado del Mes")
-                    col_chart, col_summ = st.columns([1, 1.5])
-                    with col_chart:
-                        if monto_facturado > 0 or monto_pronosticado > 0:
-                            df_donut = pd.DataFrame({
-                                'Estado': ['Facturado', 'Pronosticado / Pendiente'],
-                                'Monto (CLP)': [monto_facturado, monto_pronosticado]
-                            })
-                            fig_donut = px.pie(df_donut, values='Monto (CLP)', names='Estado', hole=0.4, color='Estado', color_discrete_map={'Facturado': '#2ECC71', 'Pronosticado / Pendiente': '#3498DB'})
-                            fig_donut.update_traces(textinfo='percent+label', textfont_size=12)
-                            fig_donut.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
-                            st.plotly_chart(fig_donut, use_container_width=True)
-                        else:
-                            st.info("No hay datos para graficar este mes.")
-                    with col_summ:
-                        st.markdown("<br><br>", unsafe_allow_html=True)
-                        st.metric("✅ Facturado a la fecha (CLP)", f"${monto_facturado:,.0f}".replace(",", "."))
-                        st.metric("⏳ Pronosticado / Pendiente (CLP)", f"${monto_pronosticado:,.0f}".replace(",", "."))
-                    
+                    st.markdown("#### 🌟 Resumen Global del Mes")
+                    c_met1, c_met2 = st.columns(2)
+                    c_met1.metric("Total Pronosticado Global (USD)", f"USD ${tot_usd:,.2f}")
+                    c_met2.metric("Total Pronosticado Global (CLP)", f"CLP ${(tot_usd * tasa_cambio):,.0f}".replace(",", "."))
                     st.divider()
                     
                     def show_table_serv(df_sub, tit):
@@ -1406,7 +1410,7 @@ def main_app():
                     
                     # Ajuste para evitar que los números se sobrepongan con la línea de la meta
                     max_clp = grp_c.groupby('ma')['clp'].sum().max()
-                    fig_p.update_traces(texttemplate='$%{text:,.0f}', textposition='auto', textfont=dict(color='white', size=14, weight='bold'), outstidetextfont=dict(color='black', size=14, weight='bold'))
+                    fig_p.update_traces(texttemplate='$%{text:,.0f}', textposition='auto', textfont=dict(color='white', size=14, weight='bold'), outsidetextfont=dict(color='black', size=14, weight='bold'))
                     fig_p.update_layout(
                         barmode='stack', 
                         yaxis_title="Monto (CLP)", 
