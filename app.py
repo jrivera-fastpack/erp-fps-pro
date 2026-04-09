@@ -1250,7 +1250,7 @@ def main_app():
                         
                         st.markdown("<hr style='margin: 10px 0; opacity: 0.2;'>", unsafe_allow_html=True)
                         
-                        st.metric("🎯 Total de gay  (CLP)", f"${(monto_facturado + monto_pronosticado):,.0f}".replace(",", "."))
+                        st.metric("🎯 Total para facturar mes (CLP)", f"${(monto_facturado + monto_pronosticado):,.0f}".replace(",", "."))
                     
                     st.divider()
                     
@@ -1422,11 +1422,20 @@ def main_app():
                     grp_c = cf.groupby(['ord', 'ma', 'Tipo'])['clp'].sum().reset_index().sort_values('ord')
                     
                     fig_p = px.bar(grp_c, x='ma', y='clp', color='Tipo', text='clp', color_discrete_map={'Facturación Finalizada a la Fecha': '#2ECC71', 'Proyectado (Tentativo)': '#3498DB'})
-                    fig_p.add_hline(y=110000000, line_dash="dash", line_color="#FF6600", line_width=3, annotation_text="Meta Mensual ($110M CLP)", annotation_position="top left", annotation_font_size=16, annotation_font_color="#FF6600")
+                    
+                    # LÍNEA SEGMENTADA COMO ELEMENTO DE LA LEYENDA
+                    fig_p.add_trace(go.Scatter(
+                        x=grp_c['ma'],
+                        y=[110000000] * len(grp_c),
+                        mode='lines',
+                        line=dict(color='#FF6600', width=3, dash='dash'),
+                        name='Meta Mensual ($110M CLP)',
+                        hoverinfo='skip'
+                    ))
                     
                     # Ajuste para evitar que los números se sobrepongan con la línea de la meta
                     max_clp = grp_c.groupby('ma')['clp'].sum().max()
-                    fig_p.update_traces(texttemplate='$%{text:,.0f}', textposition='auto', textfont=dict(color='white', size=14, weight='bold'), outsidetextfont=dict(color='black', size=14, weight='bold'))
+                    fig_p.update_traces(texttemplate='$%{text:,.0f}', textposition='auto', textfont=dict(color='white', size=14, weight='bold'), outsidetextfont=dict(color='black', size=14, weight='bold'), selector=dict(type='bar'))
                     fig_p.update_layout(
                         barmode='stack', 
                         yaxis_title="Monto (CLP)", 
