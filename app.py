@@ -1250,7 +1250,7 @@ def main_app():
                         
                         st.markdown("<hr style='margin: 10px 0; opacity: 0.2;'>", unsafe_allow_html=True)
                         
-                        st.metric("🎯 Total Esperado del Mes (CLP)", f"${(monto_facturado + monto_pronosticado):,.0f}".replace(",", "."))
+                        st.metric("🎯 Total de gay  (CLP)", f"${(monto_facturado + monto_pronosticado):,.0f}".replace(",", "."))
                     
                     st.divider()
                     
