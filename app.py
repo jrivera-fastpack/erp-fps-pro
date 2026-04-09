@@ -488,7 +488,9 @@ def main_app():
             matriz_final[col] = "⌛ No Hábil" if (f_obj.weekday() >= 5 or col in FERIADOS_CHILE_2026) else "🟢 Disponible"
             
         asig_raw = supabase.table("asignaciones_personal").select("*").execute().data
-        mapa_clientes = {n['id_nv']: n['cliente'] for n in obtener_nvs()} if obtener_nvs() else {}
+        
+        nvs_todas_matriz = obtener_nvs()
+        mapa_clientes = {n['id_nv']: n['cliente'] for n in nvs_todas_matriz} if nvs_todas_matriz else {}
 
         if asig_raw:
             for a in asig_raw:
@@ -847,7 +849,7 @@ def main_app():
                 st.info(f"💡 Los gastos se ingresan en Pesos Chilenos (CLP). Si la NV es en dólares, el sistema lo convertirá usando la tasa actual (1 USD = ${tasa_cambio} CLP).")
                 with st.form("form_gastos"):
                     c_g1, c_g2, c_g3, c_g4 = st.columns(4)
-                    nv_g = c_g1.selectbox("Proyecto", [n['id_nv'] for n in obtener_nvs("Abierta")])
+                    nv_g = c_g1.selectbox("Proyecto", [n['id_nv'] for n in nvs_all])
                     t_g = c_g2.selectbox("Ítem", ["Rendigastos", "Viático", "Hospedaje", "Pasajes", "Insumos"])
                     m_g = c_g3.number_input("Monto (CLP)", min_value=0)
                     f_g = c_g4.date_input("Fecha")
@@ -1191,8 +1193,10 @@ def main_app():
             with t_t:
                 st.markdown(f"### 💸 Pronóstico de Facturación Activa para {m_sel} {a_sel}")
                 df_hm = df_h[(df_h['mes']==m_num) & (df_h['anio']==a_sel)].copy()
-                if not df_hm.empty: df_hm = df_hm.merge(df_k[['id_nv', 'cliente', 'tipo_servicio', 'moneda', 'monto_pendiente']], on='id_nv', how='left')
-                else: df_hm = pd.DataFrame(columns=['id', 'id_nv', 'cliente', 'tipo_servicio', 'moneda', 'porcentaje', 'monto', 'estado'])
+                if not df_hm.empty: 
+                    df_hm = df_hm.merge(df_k[['id_nv', 'cliente', 'lugar', 'tipo_servicio', 'moneda', 'monto_pendiente']], on='id_nv', how='left')
+                else: 
+                    df_hm = pd.DataFrame(columns=['id', 'id_nv', 'cliente', 'lugar', 'tipo_servicio', 'moneda', 'porcentaje', 'monto', 'estado'])
                 
                 n_filas = []
                 if not df_all_valid.empty:
@@ -1200,29 +1204,71 @@ def main_app():
                     df_mf['fecha_fin'] = pd.to_datetime(df_mf['fecha_fin']).dt.date
                     for _, r in df_k.merge(df_mf, on='id_nv', how='inner').iterrows():
                         if pd.to_datetime(r['fecha_fin']).month == m_num and pd.to_datetime(r['fecha_fin']).year == a_sel and r['monto_pendiente'] > 0 and r['estado_facturacion'] != 'Facturada' and df_h[df_h['id_nv']==r['id_nv']].empty:
-                            n_filas.append({'id': 'Auto', 'id_nv': r['id_nv'], 'cliente': r['cliente'], 'tipo_servicio': r['tipo_servicio'], 'moneda': r['moneda'], 'porcentaje': 100, 'monto': r['monto_pendiente'], 'estado': 'Pronóstico Automático'})
+                            n_filas.append({'id': 'Auto', 'id_nv': r['id_nv'], 'cliente': r['cliente'], 'lugar': r['lugar'], 'tipo_servicio': r['tipo_servicio'], 'moneda': r['moneda'], 'porcentaje': 100, 'monto': r['monto_pendiente'], 'estado': 'Pronóstico Automático'})
                 
                 df_hm = pd.concat([df_hm, pd.DataFrame(n_filas)], ignore_index=True) if n_filas else df_hm
                 if not df_hm.empty:
+                    df_hm['clp'] = df_hm.apply(lambda r: r['monto'] if r['moneda']=='CLP' else r['monto']*tasa_cambio, axis=1)
                     df_hm['usd'] = df_hm.apply(lambda r: r['monto'] if r['moneda']=='USD' else r['monto']/tasa_cambio, axis=1)
-                    tot_usd = df_hm['usd'].sum()
                     
-                    st.markdown("#### 🌟 Resumen Global del Mes")
-                    c_met1, c_met2 = st.columns(2)
-                    c_met1.metric("Total Pronosticado Global (USD)", f"USD ${tot_usd:,.2f}")
-                    c_met2.metric("Total Pronosticado Global (CLP)", f"CLP ${(tot_usd * tasa_cambio):,.0f}".replace(",", "."))
+                    monto_facturado = df_hm[df_hm['estado'] == 'Facturada']['clp'].sum()
+                    monto_pronosticado = df_hm[df_hm['estado'] != 'Facturada']['clp'].sum()
+                    
+                    st.markdown("#### 📊 Balance: Facturado vs Pronosticado del Mes")
+                    col_chart, col_summ = st.columns([1, 1.5])
+                    with col_chart:
+                        if monto_facturado > 0 or monto_pronosticado > 0:
+                            df_donut = pd.DataFrame({
+                                'Estado': ['Facturado', 'Pronosticado / Pendiente'],
+                                'Monto (CLP)': [monto_facturado, monto_pronosticado]
+                            })
+                            fig_donut = px.pie(df_donut, values='Monto (CLP)', names='Estado', hole=0.4, color='Estado', color_discrete_map={'Facturado': '#2ECC71', 'Pronosticado / Pendiente': '#3498DB'})
+                            fig_donut.update_traces(textinfo='percent+label', textfont_size=12)
+                            fig_donut.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
+                            st.plotly_chart(fig_donut, use_container_width=True)
+                        else:
+                            st.info("No hay datos para graficar este mes.")
+                    with col_summ:
+                        st.markdown("<br><br>", unsafe_allow_html=True)
+                        st.metric("✅ Facturado a la fecha (CLP)", f"${monto_facturado:,.0f}".replace(",", "."))
+                        st.metric("⏳ Pronosticado / Pendiente (CLP)", f"${monto_pronosticado:,.0f}".replace(",", "."))
+                    
                     st.divider()
                     
                     def show_table_serv(df_sub, tit):
                         if df_sub.empty: return
                         st.markdown(f"#### {tit}")
                         s_usd = df_sub['usd'].sum()
-                        df_show = df_sub[['id', 'id_nv', 'cliente', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
+                        df_show = df_sub[['id', 'id_nv', 'cliente', 'lugar', 'moneda', 'porcentaje', 'monto', 'estado']].copy()
                         df_show['porcentaje'] = df_show['porcentaje'].apply(lambda x: f"{x:.1f}%")
-                        df_show = pd.concat([df_show, pd.DataFrame([{'id': '', 'id_nv': 'TOTALES', 'cliente': '', 'moneda': 'USD / CLP', 'porcentaje': '', 'monto': f"USD ${s_usd:,.2f} / CLP ${(s_usd*tasa_cambio):,.0f}".replace(",", "."), 'estado': ''}])], ignore_index=True)
+                        df_show = pd.concat([df_show, pd.DataFrame([{'id': '', 'id_nv': 'TOTALES', 'cliente': '', 'lugar': '', 'moneda': 'USD / CLP', 'porcentaje': '', 'monto': f"USD ${s_usd:,.2f} / CLP ${(s_usd*tasa_cambio):,.0f}".replace(",", "."), 'estado': ''}])], ignore_index=True)
                         df_show['monto'] = df_show.apply(lambda x: x['monto'] if isinstance(x['monto'], str) else (f"USD ${x['monto']:,.2f}" if x['moneda']=='USD' else f"CLP ${x['monto']:,.0f}".replace(",", ".")), axis=1)
-                        df_show.rename(columns={'id_nv':'NV', 'cliente':'Cliente', 'moneda':'Moneda', 'porcentaje':'% Calculado', 'monto':'Monto Parcial', 'estado':'Estado Factura'}, inplace=True)
-                        st.dataframe(df_show.drop(columns=['id']).style.apply(lambda r: ['background-color: #003366; color: white; font-weight: bold']*len(r) if r['NV']=='TOTALES' else (['background-color: #E8F8F5; font-style: italic']*len(r) if 'Auto' in str(r['Estado Factura']) else ['']*len(r)), axis=1), use_container_width=True, hide_index=True)
+                        df_show.rename(columns={'id_nv':'NV', 'cliente':'Cliente', 'lugar':'Lugar/Faena', 'moneda':'Moneda', 'porcentaje':'% Calculado', 'monto':'Monto Parcial', 'estado':'Estado Factura'}, inplace=True)
+                        
+                        df_show_no_id = df_show.drop(columns=['id'])
+                        
+                        def row_style(row):
+                            styles = [''] * len(row)
+                            if row['NV'] == 'TOTALES':
+                                return ['background-color: #003366; color: white; font-weight: bold'] * len(row)
+                            
+                            estado = str(row['Estado Factura'])
+                            estado_idx = df_show_no_id.columns.get_loc('Estado Factura')
+                            
+                            if estado == 'Facturada':
+                                styles[estado_idx] = 'background-color: #2ECC71; color: white; font-weight: bold;'
+                            elif estado in ['Pendiente', 'Pronóstico Automático']:
+                                styles[estado_idx] = 'background-color: #3498DB; color: white; font-weight: bold;'
+                            elif estado == 'Postergada':
+                                styles[estado_idx] = 'background-color: #F39C12; color: white; font-weight: bold;'
+                                
+                            if 'Auto' in estado:
+                                for i in range(len(styles)):
+                                    if not styles[i]: styles[i] = 'background-color: #E8F8F5; font-style: italic;'
+                                    
+                            return styles
+
+                        st.dataframe(df_show_no_id.style.apply(row_style, axis=1), use_container_width=True, hide_index=True)
 
                     show_table_serv(df_hm[df_hm['tipo_servicio'] == 'SSEE'], "🔹 Facturación SSEE (Salas Eléctricas)")
                     show_table_serv(df_hm[df_hm['tipo_servicio'] == 'SE TERRENO'], "🔸 Facturación SE TERRENO (Faenas)")
@@ -1357,8 +1403,19 @@ def main_app():
                     
                     fig_p = px.bar(grp_c, x='ma', y='clp', color='Tipo', text='clp', color_discrete_map={'Facturación Finalizada a la Fecha': '#2ECC71', 'Proyectado (Tentativo)': '#3498DB'})
                     fig_p.add_hline(y=110000000, line_dash="dash", line_color="#FF6600", line_width=3, annotation_text="Meta Mensual ($110M CLP)", annotation_position="top left", annotation_font_size=16, annotation_font_color="#FF6600")
-                    fig_p.update_traces(texttemplate='$%{text:,.0f}', textposition='inside', insidetextfont=dict(color='white', size=14, weight='bold'))
-                    fig_p.update_layout(barmode='stack', yaxis_title="Monto (CLP)", xaxis_title="", plot_bgcolor='white', legend_title_text='Estado')
+                    
+                    # Ajuste para evitar que los números se sobrepongan con la línea de la meta
+                    max_clp = grp_c.groupby('ma')['clp'].sum().max()
+                    fig_p.update_traces(texttemplate='$%{text:,.0f}', textposition='auto', textfont=dict(color='white', size=14, weight='bold'), outstidetextfont=dict(color='black', size=14, weight='bold'))
+                    fig_p.update_layout(
+                        barmode='stack', 
+                        yaxis_title="Monto (CLP)", 
+                        xaxis_title="", 
+                        plot_bgcolor='white', 
+                        legend_title_text='Estado',
+                        yaxis=dict(range=[0, max(max_clp, 110000000) * 1.25])
+                    )
+                    
                     fig_p.update_xaxes(categoryorder='array', categoryarray=grp_c['ma'].unique())
                     st.plotly_chart(fig_p, use_container_width=True)
                     
