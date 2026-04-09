@@ -1243,9 +1243,17 @@ def main_app():
                         else:
                             st.info("No hay datos para graficar este mes.")
                     with col_summ:
-                        st.markdown("<br><br>", unsafe_allow_html=True)
-                        st.metric("✅ Facturado a la fecha (CLP)", f"${monto_facturado:,.0f}".replace(",", "."))
-                        st.metric("⏳ Pronosticado / Pendiente (CLP)", f"${monto_pronosticado:,.0f}".replace(",", "."))
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        c_met_a, c_met_b = st.columns(2)
+                        c_met_a.metric("✅ Facturado a la fecha (CLP)", f"${monto_facturado:,.0f}".replace(",", "."))
+                        c_met_b.metric("⏳ Pronosticado / Pendiente (CLP)", f"${monto_pronosticado:,.0f}".replace(",", "."))
+                        
+                        st.markdown("<hr style='margin: 10px 0; opacity: 0.2;'>", unsafe_allow_html=True)
+                        
+                        c_met_c, c_met_d = st.columns(2)
+                        c_met_c.metric("🎯 Total Esperado del Mes (CLP)", f"${(monto_facturado + monto_pronosticado):,.0f}".replace(",", "."))
+                        diferencia_fact = monto_pronosticado - monto_facturado
+                        c_met_d.metric("⚖️ Diferencia (Pendiente - Fact)", f"${diferencia_fact:,.0f}".replace(",", "."))
                     
                     st.divider()
                     
