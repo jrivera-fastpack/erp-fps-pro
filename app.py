@@ -650,11 +650,22 @@ def main_app():
                                 if st.form_submit_button("Guardar Operación"):
                                     try:
                                         if "Reanudar" in accion:
-                                            for rid in df_last['id'].tolist(): supabase.table("asignaciones_personal").update({"justificacion": str(df_last[df_last['id']==rid]['justificacion'].iloc[0]).replace("[PAUSADA]", "").strip() + " (Fin)"}).eq("id", rid).execute()
+                                            for rid in df_last['id'].tolist():
+                                                supabase.table("asignaciones_personal").update({"justificacion": str(df_last[df_last['id']==rid]['justificacion'].iloc[0]).replace("[PAUSADA]", "").strip() + " (Fin)"}).eq("id", rid).execute()
+                                        elif "Pausar" in accion:
+                                            for rid in df_last['id'].tolist():
+                                                supabase.table("asignaciones_personal").update({"justificacion": f"[PAUSADA] {just}"}).eq("id", rid).execute()
                                         else:
-                                            for rid in df_last['id'].tolist(): supabase.table("asignaciones_personal").delete().eq("id", rid).execute()
+                                            # Solución al desfase: No borrar a ciegas todo el historial
+                                            for esp_actual in esps:
+                                                supabase.table("asignaciones_personal").delete()\
+                                                    .eq("id_nv", nv_id_sel)\
+                                                    .eq("actividad_ssee", act)\
+                                                    .eq("especialista", esp_actual)\
+                                                    .gte("fecha_inicio", str(f_ini)).execute()
                                         
                                         supabase.table("asignaciones_personal").update({"progreso": n_p}).eq("id_nv", nv_id_sel).eq("actividad_ssee", act).execute()
+                                        
                                         bloques_ejecucion = generar_bloques_turno(f_ini, d_trab, modalidad_turno, esps)
                                         final_j = f"[PAUSADA] {just}" if "Pausar" in accion else just
                                         
