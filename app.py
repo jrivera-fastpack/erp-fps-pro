@@ -72,12 +72,17 @@ def safe_insert_asignacion(payload):
         else:
             raise ex_db
 
-# --- CONSTANTES GLOBALES ---
-ESPECIALISTAS = [
-    "Felipe Romero", "David Colina", "Adelmo Calderon", "Jose Valenzuela", 
-    "Jose Peña", "German Contreras", "Esteban Romero", "Nicolas Salazar", 
-    "Javier Segovia", "Jonathan Aguilar", "Ignacio Castro", "Javier Rivera"
-]
+# --- CARGA DINÁMICA DE PERSONAL ---
+def obtener_especialistas():
+    try:
+        res = supabase.table("especialistas").select("nombre").execute()
+        if res.data:
+            return sorted([x['nombre'] for x in res.data])
+        return []
+    except Exception:
+        return ["Error de conexión"] # Respaldo en caso de error
+
+ESPECIALISTAS = obtener_especialistas()
 
 ABREVIATURAS = {
     "Entrega materiales": "Mat", 
@@ -231,7 +236,42 @@ def main_app():
     st.sidebar.divider()
     st.sidebar.header("⚙️ Configuración Global")
     tasa_cambio = st.sidebar.number_input("Valor del Dólar (CLP)", min_value=1.0, value=950.0, step=1.0)
-
+# --- PANEL DE ADMINISTRACIÓN DE PERSONAL (BARRA LATERAL) ---
+    st.sidebar.divider()
+    st.sidebar.header("👥 Gestión de Personal")
+    with st.sidebar.expander("➕ Agregar / 🗑️ Eliminar", expanded=False):
+        
+        # Formulario para Agregar
+        with st.form("form_add_esp", clear_on_submit=True):
+            st.markdown("**Nuevo Especialista**")
+            nuevo_esp = st.text_input("Nombre Completo")
+            if st.form_submit_button("Agregar al sistema", use_container_width=True):
+                if nuevo_esp.strip():
+                    if nuevo_esp.strip() not in ESPECIALISTAS:
+                        try:
+                            supabase.table("especialistas").insert({"nombre": nuevo_esp.strip()}).execute()
+                            st.success(f"✅ {nuevo_esp} agregado.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al guardar: {e}")
+                    else:
+                        st.warning("⚠️ Esta persona ya existe.")
+                else:
+                    st.warning("⚠️ Escribe un nombre válido.")
+        
+        # Formulario para Eliminar
+        if ESPECIALISTAS:
+            with st.form("form_del_esp"):
+                st.markdown("**Eliminar Especialista**")
+                esp_a_borrar = st.selectbox("Seleccione la persona", ESPECIALISTAS)
+                st.caption("⚠️ Nota: Eliminarlo no borrará su historial de la base de datos.")
+                if st.form_submit_button("Eliminar del sistema", use_container_width=True):
+                    try:
+                        supabase.table("especialistas").delete().eq("nombre", esp_a_borrar).execute()
+                        st.success(f"✅ {esp_a_borrar} eliminado.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al eliminar: {e}")
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 1. Comercial", "🗓️ 2. Matriz Semanal", "⚙️ 3. Ejecución y Gantt", "💰 4. Gastos y KPIs", "📄 5. Cierre y Reporte PDF"])
 
     # === MÓDULO 1: COMERCIAL ===
