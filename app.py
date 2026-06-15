@@ -591,7 +591,52 @@ def main_app():
             if 'Disponible' in str(x): return 'background-color: #E6F2FF; color: #003366'
             return 'background-color: #D5F5E3; color: #196F3D; font-weight: bold'
         st.dataframe(matriz_final.style.map(style_m), use_container_width=True, height=550)
-
+# --- HERRAMIENTA DE LIMPIEZA RÁPIDA (NUEVO) ---
+        st.divider()
+        st.markdown("### 🧹 Limpieza Rápida: Eliminar asignación por Técnico y Día")
+        st.info("💡 Como las celdas de la tabla no se pueden hacer clic directamente, usa esta herramienta para localizar y eliminar la tarea que ves asignada a un técnico en un día particular.")
+        
+        c_l1, c_l2 = st.columns(2)
+        esp_limp = c_l1.selectbox("Selecciona el Técnico", ESPECIALISTAS, key="limp_esp")
+        fecha_limp = c_l2.date_input("Selecciona el Día (Buscar)", value=f_base, key="limp_f")
+        
+        if esp_limp and fecha_limp:
+            # Buscar asignaciones de este técnico
+            asig_tech = supabase.table("asignaciones_personal").select("*").eq("especialista", esp_limp).execute().data
+            
+            tareas_dia = []
+            for a in asig_tech:
+                try:
+                    f_i = pd.to_datetime(a['fecha_inicio']).date()
+                    f_f = pd.to_datetime(a['fecha_fin']).date()
+                    # Si el día seleccionado está dentro del rango de la tarea, la listamos
+                    if f_i <= fecha_limp <= f_f:
+                        tareas_dia.append(a)
+                except: pass
+                
+            if tareas_dia:
+                st.markdown(f"**Asignaciones encontradas para {esp_limp} el {fecha_limp.strftime('%d/%m/%Y')}:**")
+                for t in tareas_dia:
+                    with st.container():
+                        col_t, col_b = st.columns([4, 1])
+                        
+                        # Formatear el nombre según el tipo de tarea
+                        if t['actividad_ssee'] == 'PROYECCION_GLOBAL':
+                            lbl = f"💼 **{t['id_nv']} (Proyección Matriz)** | Rango: {t['fecha_inicio']} al {t['fecha_fin']}"
+                        elif t['id_nv'] == 'AUSENCIA':
+                            lbl = f"🌴 **Ausencia ({t['actividad_ssee']})** | Rango: {t['fecha_inicio']} al {t['fecha_fin']}"
+                        elif t['id_nv'] == 'INTERNO':
+                            lbl = f"🏢 **Labor Interna ({t['actividad_ssee']})** | Rango: {t['fecha_inicio']} al {t['fecha_fin']}"
+                        else:
+                            lbl = f"📌 **{t['id_nv']} ({t['actividad_ssee']})** | Rango: {t['fecha_inicio']} al {t['fecha_fin']} (Gantt)"
+                            
+                        col_t.markdown(lbl)
+                        if col_b.button("🗑️ Eliminar este bloque", key=f"del_rapido_{t['id']}", use_container_width=True):
+                            supabase.table("asignaciones_personal").delete().eq("id", t['id']).execute()
+                            st.success("✅ Asignación eliminada con éxito.")
+                            st.rerun()
+            else:
+                st.write(f"🟢 No hay tareas activas en la base de datos para {esp_limp} en este día específico.")
     # === MÓDULO 3: GANTT ===
     with tab3:
         st.header("Ejecución: Alcance, Programación Viva y Gantt")
