@@ -236,7 +236,8 @@ def main_app():
     st.sidebar.divider()
     st.sidebar.header("⚙️ Configuración Global")
     tasa_cambio = st.sidebar.number_input("Valor del Dólar (CLP)", min_value=1.0, value=950.0, step=1.0)
-# --- PANEL DE ADMINISTRACIÓN DE PERSONAL (BARRA LATERAL) ---
+    
+    # --- PANEL DE ADMINISTRACIÓN DE PERSONAL (BARRA LATERAL) ---
     st.sidebar.divider()
     st.sidebar.header("👥 Gestión de Personal")
     with st.sidebar.expander("➕ Agregar / 🗑️ Eliminar", expanded=False):
@@ -272,6 +273,7 @@ def main_app():
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error al eliminar: {e}")
+                        
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 1. Comercial", "🗓️ 2. Matriz Semanal", "⚙️ 3. Ejecución y Gantt", "💰 4. Gastos y KPIs", "📄 5. Cierre y Reporte PDF"])
 
     # === MÓDULO 1: COMERCIAL ===
@@ -450,13 +452,12 @@ def main_app():
                             dias_proy = c_f2.number_input("Rango Total de Días", min_value=1.0, value=val_min_seguro)
                             
                             if st.form_submit_button("Guardar Proyección", use_container_width=True):
-                                # LÍNEA ELIMINADA: supabase.table("asignaciones_personal").delete().eq("id_nv", nv_data_sel['id_nv']).eq("actividad_ssee", "PROYECCION_GLOBAL").execute()
                                 # Ahora simplemente añade la proyección sin borrar las fechas previas asignadas a este proyecto
-                                
                                 bloques_gen = generar_bloques_turno(f_ini, dias_proy, modalidad_matriz, especialistas_sel)
                                 for b in bloques_gen: 
                                     safe_insert_asignacion({"id_nv": nv_data_sel['id_nv'], "especialista": b['especialista'], "fecha_inicio": str(b['f_ini']), "fecha_fin": str(b['f_f']), "hh_asignadas": 0, "actividad_ssee": "PROYECCION_GLOBAL", "comentarios": b['comentarios'], "progreso": 0, "hora_inicio_t": h_inicio_val.strftime('%H:%M') if h_inicio_val else '08:00', "hora_fin_t": h_fin_val.strftime('%H:%M') if h_fin_val else '17:30', "horas_diarias": 0 if b.get('es_descanso') else (h_diarias_val if h_diarias_val else 0)})
                                 st.success("✅ Proyección agregada al historial"); st.rerun()
+                
                 with tab_proy2:
                     proy_raw = supabase.table("asignaciones_personal").select("*").eq("actividad_ssee", "PROYECCION_GLOBAL").execute().data
                     if proy_raw:
@@ -591,52 +592,70 @@ def main_app():
             if 'Disponible' in str(x): return 'background-color: #E6F2FF; color: #003366'
             return 'background-color: #D5F5E3; color: #196F3D; font-weight: bold'
         st.dataframe(matriz_final.style.map(style_m), use_container_width=True, height=550)
-# --- HERRAMIENTA DE LIMPIEZA RÁPIDA (NUEVO) ---
+
+        # --- HERRAMIENTA DE LIMPIEZA INTELIGENTE (ELIMINAR UN DÍA ESPECÍFICO) ---
         st.divider()
-        st.markdown("### 🧹 Limpieza Rápida: Eliminar asignación por Técnico y Día")
-        st.info("💡 Como las celdas de la tabla no se pueden hacer clic directamente, usa esta herramienta para localizar y eliminar la tarea que ves asignada a un técnico en un día particular.")
+        st.markdown("### 🎯 Liberar un día específico de la matriz")
+        st.caption("Selecciona al técnico y la fecha exacta que deseas borrar. Solo se eliminará ese día en particular de su agenda, manteniendo el resto de la semana intacta.")
         
-        c_l1, c_l2 = st.columns(2)
-        esp_limp = c_l1.selectbox("Selecciona el Técnico", ESPECIALISTAS, key="limp_esp")
-        fecha_limp = c_l2.date_input("Selecciona el Día (Buscar)", value=f_base, key="limp_f")
+        c_dp1, c_dp2 = st.columns(2)
+        esp_del = c_dp1.selectbox("Técnico a limpiar", ESPECIALISTAS, key="del_proy_esp")
+        fecha_del = c_dp2.date_input("Fecha exacta a liberar", value=f_base, format="DD/MM/YYYY", key="del_proy_f")
         
-        if esp_limp and fecha_limp:
-            # Buscar asignaciones de este técnico
-            asig_tech = supabase.table("asignaciones_personal").select("*").eq("especialista", esp_limp).execute().data
+        if st.button("🗑️ Eliminar tarea de este día", use_container_width=True):
+            # Buscamos todas las asignaciones de este especialista
+            proy_raw = supabase.table("asignaciones_personal").select("*").eq("especialista", esp_del).execute().data
             
-            tareas_dia = []
-            for a in asig_tech:
-                try:
-                    f_i = pd.to_datetime(a['fecha_inicio']).date()
-                    f_f = pd.to_datetime(a['fecha_fin']).date()
-                    # Si el día seleccionado está dentro del rango de la tarea, la listamos
-                    if f_i <= fecha_limp <= f_f:
-                        tareas_dia.append(a)
-                except: pass
-                
-            if tareas_dia:
-                st.markdown(f"**Asignaciones encontradas para {esp_limp} el {fecha_limp.strftime('%d/%m/%Y')}:**")
-                for t in tareas_dia:
-                    with st.container():
-                        col_t, col_b = st.columns([4, 1])
+            if proy_raw:
+                modificado = False
+                for p in proy_raw:
+                    try:
+                        f_i = pd.to_datetime(p['fecha_inicio']).date()
+                        f_f = pd.to_datetime(p['fecha_fin']).date()
+                    except:
+                        continue
+                    
+                    # Si la fecha que queremos borrar cae DENTRO del bloque de tarea de esta iteración
+                    if f_i <= fecha_del <= f_f:
+                        modificado = True
                         
-                        # Formatear el nombre según el tipo de tarea
-                        if t['actividad_ssee'] == 'PROYECCION_GLOBAL':
-                            lbl = f"💼 **{t['id_nv']} (Proyección Matriz)** | Rango: {t['fecha_inicio']} al {t['fecha_fin']}"
-                        elif t['id_nv'] == 'AUSENCIA':
-                            lbl = f"🌴 **Ausencia ({t['actividad_ssee']})** | Rango: {t['fecha_inicio']} al {t['fecha_fin']}"
-                        elif t['id_nv'] == 'INTERNO':
-                            lbl = f"🏢 **Labor Interna ({t['actividad_ssee']})** | Rango: {t['fecha_inicio']} al {t['fecha_fin']}"
-                        else:
-                            lbl = f"📌 **{t['id_nv']} ({t['actividad_ssee']})** | Rango: {t['fecha_inicio']} al {t['fecha_fin']} (Gantt)"
+                        # Caso 1: La tarea dura exactamente ese único día -> Se borra completa
+                        if f_i == fecha_del and f_f == fecha_del:
+                            supabase.table("asignaciones_personal").delete().eq("id", p['id']).execute()
                             
-                        col_t.markdown(lbl)
-                        if col_b.button("🗑️ Eliminar este bloque", key=f"del_rapido_{t['id']}", use_container_width=True):
-                            supabase.table("asignaciones_personal").delete().eq("id", t['id']).execute()
-                            st.success("✅ Asignación eliminada con éxito.")
-                            st.rerun()
+                        # Caso 2: Se borra el primer día -> Se acorta moviendo el inicio un día adelante
+                        elif f_i == fecha_del:
+                            nueva_inicio = (fecha_del + timedelta(days=1)).strftime('%Y-%m-%d')
+                            supabase.table("asignaciones_personal").update({"fecha_inicio": nueva_inicio}).eq("id", p['id']).execute()
+                            
+                        # Caso 3: Se borra el último día -> Se acorta moviendo el final un día atrás
+                        elif f_f == fecha_del:
+                            nueva_fin = (fecha_del - timedelta(days=1)).strftime('%Y-%m-%d')
+                            supabase.table("asignaciones_personal").update({"fecha_fin": nueva_fin}).eq("id", p['id']).execute()
+                            
+                        # Caso 4: Se borra un día en el MEDIO -> Partimos la tarea en dos
+                        else:
+                            nueva_fin_1 = (fecha_del - timedelta(days=1)).strftime('%Y-%m-%d')
+                            nueva_inicio_2 = (fecha_del + timedelta(days=1)).strftime('%Y-%m-%d')
+                            
+                            # Actualizamos la tarea original para que termine justo antes del día borrado
+                            supabase.table("asignaciones_personal").update({"fecha_fin": nueva_fin_1}).eq("id", p['id']).execute()
+                            
+                            # Clonamos la tarea para crear la segunda mitad desde el día después
+                            p_nuevo = p.copy()
+                            p_nuevo.pop('id', None) # Quitamos el ID viejo para que base de datos asigne uno nuevo
+                            p_nuevo.pop('created_at', None) # Quitar el timestamp si tu base lo usa
+                            p_nuevo['fecha_inicio'] = nueva_inicio_2
+                            safe_insert_asignacion(p_nuevo)
+                
+                if modificado:
+                    st.success(f"✅ Se liberó exitosamente el día {fecha_del.strftime('%d/%m/%Y')} en la agenda de {esp_del}.")
+                    st.rerun()
+                else:
+                    st.warning(f"⚠️ {esp_del} no tiene ninguna tarea asignada en el calendario para el {fecha_del.strftime('%d/%m/%Y')}.")
             else:
-                st.write(f"🟢 No hay tareas activas en la base de datos para {esp_limp} en este día específico.")
+                st.warning(f"⚠️ {esp_del} no tiene tareas registradas.")
+
     # === MÓDULO 3: GANTT ===
     with tab3:
         st.header("Ejecución: Alcance, Programación Viva y Gantt")
